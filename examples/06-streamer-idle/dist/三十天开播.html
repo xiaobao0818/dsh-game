@@ -1,0 +1,3142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#12162a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>三十天开播</title>
+<link rel="icon" href="data:,">
+<style>
+/* 基础重置 + 全屏画布 + 启动遮罩（所有游戏共用） */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%; overflow: hidden; background: #171a28;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none; touch-action: none;
+}
+#app { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+canvas#game { display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
+#boot {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(120% 120% at 50% 20%, #3a2440 0%, #141a33 70%);
+  z-index: 20; transition: opacity .35s ease; cursor: pointer;
+}
+#boot.hide { opacity: 0; pointer-events: none; }
+.boot-mask { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(255,255,255,.02) 0 1px, transparent 1px 4px); }
+.boot-card { position: relative; text-align: center; padding: 28px 34px; }
+.boot-title {
+  font-size: clamp(28px, 6vw, 54px); font-weight: 900; letter-spacing: .12em;
+  color: #fff; text-shadow: 0 4px 0 rgba(0,0,0,.25), 0 0 28px rgba(255,215,106,0.55);
+}
+.boot-sub { margin-top: 10px; font-size: clamp(12px, 1.6vw, 16px); letter-spacing: .3em; color: rgba(255,255,255,.72); }
+.boot-hint {
+  margin-top: 34px; font-size: clamp(13px, 1.6vw, 16px); color: #fff; opacity: .9;
+  padding: 10px 20px; border: 1px solid rgba(255,255,255,.35); border-radius: 999px;
+  display: inline-block; animation: bootPulse 1.6s ease-in-out infinite;
+}
+@keyframes bootPulse { 0%,100% { opacity: .55; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="game" aria-label="三十天开播"></canvas>
+</div>
+<div id="boot">
+  <div class="boot-mask"></div>
+  <div class="boot-card">
+    <div class="boot-title">三十天开播</div>
+    <div class="boot-sub">都市夜景 · 保安的生意</div>
+    <div class="boot-hint" id="boot-hint">轻触屏幕开始</div>
+  </div>
+</div>
+<noscript>需要开启 JavaScript 才能游玩。</noscript>
+<script>
+/* 三十天开播 · 单文件构建（离线可玩） */
+(function(){
+"use strict";
+const __m = Object.create(null);
+__m["js/core.js"] = (function(){
+/* =========================================================================
+ * core.js —— 纯逻辑层（无 DOM，可在 Node 里跑无头仿真）
+ * 数学工具 / 可复现随机 / 版本化存档
+ * ========================================================================= */
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const invLerp = (a, b, v) => (b === a ? 0 : (v - a) / (b - a));
+const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
+const smoothstep = (t) => t * t * (3 - 2 * t);
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+const easeOutBack = (t) => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
+const TAU = Math.PI * 2;
+const dist2 = (ax, ay, bx, by) => { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; };
+const dist = (ax, ay, bx, by) => Math.sqrt(dist2(ax, ay, bx, by));
+const pointInRect = (x, y, r) => x >= r.x && y >= r.y && x <= r.x + r.w && y <= r.y + r.h;
+const rectsOverlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+const fmt = (n) => {
+  n = Math.floor(n);
+  if (n >= 1e8) return (n / 1e8).toFixed(2).replace(/\.?0+$/, '') + '亿';
+  if (n >= 1e4) return (n / 1e4).toFixed(1).replace(/\.0$/, '') + '万';
+  return String(n);
+};
+const fmtTime = (s) => {
+  s = Math.max(0, Math.floor(s));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+};
+const pick = (rng, arr) => arr[Math.min(arr.length - 1, (rng() * arr.length) | 0)];
+const shuffle = (rng, arr) => {
+  for (let i = arr.length - 1; i > 0; i--) { const j = (rng() * (i + 1)) | 0; const t = arr[i]; arr[i] = arr[j]; arr[j] = t; }
+  return arr;
+};
+
+/* ---------- 可复现随机数（mulberry32） ---------- */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashString(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+class RNG {
+  constructor(seed) { this.seed = typeof seed === 'string' ? hashString(seed) : (seed >>> 0); this.f = mulberry32(this.seed); }
+  next() { return this.f(); }
+  range(a, b) { return a + (b - a) * this.f(); }
+  int(a, b) { return Math.floor(a + (b - a + 1) * this.f()); }
+  pick(arr) { return pick(this.f, arr); }
+  shuffle(arr) { return shuffle(this.f, arr); }
+  chance(p) { return this.f() < p; }
+}
+
+/* ---------- 版本化存档（localStorage 可缺省） ---------- */
+const LS = (() => { try { return typeof window === 'undefined' ? null : (window.localStorage || null); } catch (e) { return null; } })();
+
+function makeSave(slug, customDefault = {}) {
+  const KEY = 'gs_' + slug + '_v1';
+  const DEFAULT = {
+    v: 1,
+    unlocked: 1,
+    stars: {},
+    best: {},
+    coins: 0,
+    totalClears: 0,
+    totalKills: 0,
+    playSec: 0,
+    firstRun: true,
+    settings: { music: true, sfx: true, haptic: true, lowfx: false },
+    flags: {},
+    ...customDefault,
+  };
+  const deepMerge = (base, patch) => {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return patch === undefined ? base : patch;
+    const out = Array.isArray(base) ? base.slice() : { ...base };
+    for (const k of Object.keys(patch)) {
+      const b = base ? base[k] : undefined;
+      const p = patch[k];
+      out[k] = (p && typeof p === 'object' && !Array.isArray(p) && b && typeof b === 'object' && !Array.isArray(b)) ? deepMerge(b, p) : p;
+    }
+    return out;
+  };
+  class Save {
+    constructor() { this.data = this.load(); }
+    load() {
+      try {
+        const raw = LS && LS.getItem(KEY);
+        return raw ? deepMerge(JSON.parse(JSON.stringify(DEFAULT)), JSON.parse(raw)) : JSON.parse(JSON.stringify(DEFAULT));
+      } catch (e) { return JSON.parse(JSON.stringify(DEFAULT)); }
+    }
+    flush() { try { LS && LS.setItem(KEY, JSON.stringify(this.data)); } catch (e) { /* 配额不足时静默 */ } }
+    reset() { this.data = JSON.parse(JSON.stringify(DEFAULT)); this.flush(); }
+    get settings() { return this.data.settings; }
+    setSetting(k, v) { this.data.settings[k] = v; this.flush(); }
+    starOf(id) { return this.data.stars[id] || 0; }
+    isUnlocked(id) { return id <= this.data.unlocked; }
+    complete(id, stars, score) {
+      const d = this.data;
+      d.stars[id] = Math.max(d.stars[id] || 0, stars);
+      if (!d.best[id] || score > d.best[id]) d.best[id] = score;
+      if (id + 1 > d.unlocked) d.unlocked = id + 1;
+      d.totalClears++;
+      this.flush();
+    }
+    totalStars() { return Object.keys(this.data.stars).reduce((s, k) => s + this.data.stars[k], 0); }
+    addCoins(n) { this.data.coins = Math.max(0, (this.data.coins || 0) + n); this.flush(); }
+    flag(k, v) { this.data.flags[k] = v; this.flush(); }
+  }
+  return new Save();
+}
+
+/* ---------- 无头仿真使用的空服务 ---------- */
+const silentAudio = { sfx() {}, setMuted() {}, music() {}, ok: false };
+const silentFx = { burst() {}, text() {}, shake() {}, flash() {}, ring() {}, beam() {}, ok: false };
+
+return { clamp, lerp, invLerp, damp, smoothstep, easeOutCubic, easeOutBack, TAU, dist2, dist, pointInRect, rectsOverlap, fmt, fmtTime, pick, shuffle, mulberry32, hashString, RNG, makeSave, silentAudio, silentFx };
+})();
+__m["js/platform.js"] = (function(){
+/* =========================================================================
+ * platform.js —— 浏览器平台层：自适应布局 / WebAudio 合成音乐音效 /
+ *                 粒子与屏震 / 指针输入
+ * ========================================================================= */
+const { clamp, RNG } = __m["js/core.js"];
+
+
+/* ------------------------------ 布局 ------------------------------ */
+class Layout {
+  constructor(canvas, W, H) {
+    this.canvas = canvas;
+    this.W = W; this.H = H;
+    this.scale = 1; this.ox = 0; this.oy = 0;
+    this.resize();
+  }
+  resize() {
+    // 限制总像素（约 240 万），保证竖屏高分设备也能 60fps
+    const baseDpr = Math.min(2, window.devicePixelRatio || 1);
+    const dpr = Math.max(1, Math.min(baseDpr, Math.sqrt(2400000 / (this.W * this.H))));
+    const vw = window.innerWidth, vh = window.innerHeight;
+    this.scale = Math.min(vw / this.W, vh / this.H);
+    const cw = Math.round(this.W * this.scale), ch = Math.round(this.H * this.scale);
+    this.ox = Math.round((vw - cw) / 2); this.oy = Math.round((vh - ch) / 2);
+    const c = this.canvas;
+    c.width = Math.round(this.W * dpr); c.height = Math.round(this.H * dpr);
+    c.style.width = cw + 'px'; c.style.height = ch + 'px';
+    // #app 已是 flex 居中：不要再加 margin，否则窗口比例与设计比例不同时画布会被二次偏移
+    c.style.marginLeft = '0px'; c.style.marginTop = '0px';
+    this.dpr = dpr;
+  }
+  applyTransform(ctx) { ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); }
+  toDesign(clientX, clientY) {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: ((clientX - r.left) / r.width) * this.W, y: ((clientY - r.top) / r.height) * this.H };
+  }
+}
+
+/* ------------------------------ 音频 ------------------------------ */
+const NOTE = (semi) => 440 * Math.pow(2, semi / 12); // semi 相对 A4
+
+class Sound {
+  constructor(theme) {
+    this.theme = theme || {};
+    this.ctx = null; this.master = null; this.musicGain = null; this.sfxGain = null;
+    this.muted = { music: false, sfx: false };
+    this.started = false; this.timer = null; this.step = 0; this.nextTime = 0; this.rng = new RNG(7);
+    this.mood = this.theme.music || { root: -9, scale: [0, 2, 4, 7, 9], tempo: 76 };
+  }
+  ensure() {
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); return true; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    try {
+      this.ctx = new AC();
+      this.master = this.ctx.createGain(); this.master.gain.value = 0.85; this.master.connect(this.ctx.destination);
+      this.musicGain = this.ctx.createGain(); this.musicGain.gain.value = 0.26; this.musicGain.connect(this.master);
+      this.sfxGain = this.ctx.createGain(); this.sfxGain.gain.value = 0.7; this.sfxGain.connect(this.master);
+      this.startMusic();
+      return true;
+    } catch (e) { this.ctx = null; return false; }
+  }
+  setMuted(kind, v) {
+    this.muted[kind] = v;
+    if (!this.ctx) return;
+    const g = kind === 'music' ? this.musicGain : this.sfxGain;
+    g.gain.setTargetAtTime(v ? 0 : (kind === 'music' ? 0.26 : 0.7), this.ctx.currentTime, 0.08);
+  }
+  /* 单音：type/freq/dur/gain/slide/attack */
+  tone({ type = 'sine', freq = 440, dur = 0.15, gain = 0.25, slide = 0, attack = 0.005, dest = null, when = 0 }) {
+    if (!this.ctx || this.muted.sfx) return;
+    const t0 = this.ctx.currentTime + when;
+    const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq * slide), t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t0 + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(dest || this.sfxGain); o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  noise({ dur = 0.18, gain = 0.2, freq = 1200, q = 1, type = 'lowpass', when = 0 }) {
+    if (!this.ctx || this.muted.sfx) return;
+    const t0 = this.ctx.currentTime + when;
+    const len = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const f = this.ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = this.ctx.createGain(); g.gain.value = gain;
+    src.connect(f); f.connect(g); g.connect(this.sfxGain); src.start(t0);
+  }
+  sfx(name) {
+    if (!this.ctx) return;
+    switch (name) {
+      case 'click': this.tone({ type: 'triangle', freq: 660, dur: 0.06, gain: 0.16, slide: 1.2 }); break;
+      case 'coin': this.tone({ type: 'square', freq: 880, dur: 0.07, gain: 0.1 }); this.tone({ type: 'square', freq: 1320, dur: 0.1, gain: 0.07, when: 0.05 }); break;
+      case 'hit': this.noise({ dur: 0.08, gain: 0.12, freq: 900, type: 'bandpass', q: 1.4 }); break;
+      case 'punch': this.tone({ type: 'sine', freq: 160, dur: 0.12, gain: 0.3, slide: 0.5 }); break;
+      case 'arrow': this.tone({ type: 'sawtooth', freq: 900, dur: 0.08, gain: 0.05, slide: 0.4 }); break;
+      case 'explode': this.noise({ dur: 0.35, gain: 0.32, freq: 320, type: 'lowpass' }); this.tone({ type: 'sine', freq: 90, dur: 0.3, gain: 0.28, slide: 0.4 }); break;
+      case 'build': this.tone({ type: 'triangle', freq: 330, dur: 0.12, gain: 0.18 }); this.tone({ type: 'triangle', freq: 494, dur: 0.16, gain: 0.15, when: 0.07 }); break;
+      case 'upgrade': [523, 659, 784, 1046].forEach((f, i) => this.tone({ type: 'triangle', freq: f, dur: 0.14, gain: 0.12, when: i * 0.06 })); break;
+      case 'spell': this.tone({ type: 'sine', freq: 300, dur: 0.4, gain: 0.2, slide: 2.4 }); this.noise({ dur: 0.3, gain: 0.1, freq: 2000, type: 'highpass' }); break;
+      case 'freeze': this.tone({ type: 'sine', freq: 1400, dur: 0.3, gain: 0.1, slide: 0.6 }); break;
+      case 'merge': this.tone({ type: 'triangle', freq: 440, dur: 0.1, gain: 0.16, slide: 1.6 }); break;
+      case 'win': [523, 659, 784, 1046, 1318].forEach((f, i) => this.tone({ type: 'triangle', freq: f, dur: 0.22, gain: 0.14, when: i * 0.1 })); break;
+      case 'lose': [392, 330, 262, 196].forEach((f, i) => this.tone({ type: 'sawtooth', freq: f, dur: 0.26, gain: 0.09, when: i * 0.13 })); break;
+      case 'warn': this.tone({ type: 'square', freq: 220, dur: 0.18, gain: 0.1, slide: 0.8 }); break;
+      case 'pickup': this.tone({ type: 'sine', freq: 1046, dur: 0.06, gain: 0.1 }); this.tone({ type: 'sine', freq: 1568, dur: 0.08, gain: 0.07, when: 0.03 }); break;
+      default: this.tone({ type: 'sine', freq: 520, dur: 0.06, gain: 0.1 });
+    }
+  }
+  /* 极简程序化配乐：和弦 pad + 五声音阶琶音，按 mood 换调式 */
+  startMusic() {
+    if (!this.ctx || this.timer) return;
+    const m = this.mood;
+    const beat = 60 / (m.tempo || 76);
+    this.nextTime = this.ctx.currentTime + 0.1; this.step = 0;
+    const tick = () => {
+      if (!this.ctx) return;
+      while (this.nextTime < this.ctx.currentTime + 0.6) {
+        if (!this.muted.music) this.playStep(this.step, this.nextTime - this.ctx.currentTime, beat, m);
+        this.nextTime += beat; this.step++;
+      }
+      this.timer = setTimeout(tick, 180);
+    };
+    tick();
+  }
+  playStep(step, when, beat, m) {
+    const scale = m.scale || [0, 2, 4, 7, 9];
+    const root = m.root ?? -9;
+    const bar = Math.floor(step / 8) % 4;
+    const chords = [[0, 4, 7], [-3, 2, 5], [-5, 0, 4], [-1, 2, 7]];
+    const ch = chords[bar];
+    if (step % 8 === 0) {
+      for (const s of ch) this.pad(NOTE(root + s - 12), beat * 4, 0.05, when);
+    }
+    if (step % 2 === 0) {
+      const deg = scale[Math.floor(this.rng.next() * scale.length)];
+      this.arp(NOTE(root + deg + 12), beat * 0.9, 0.035, when);
+    }
+    if (step % 8 === 4) this.arp(NOTE(root + ch[2]), beat * 1.4, 0.03, when);
+  }
+  pad(freq, dur, gain, when) {
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime + when;
+    for (let i = 0; i < 2; i++) {
+      const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+      o.type = i ? 'sine' : 'triangle'; o.frequency.value = freq * (i ? 1.005 : 1);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(gain, t0 + dur * 0.3);
+      g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(this.musicGain); o.start(t0); o.stop(t0 + dur + 0.05);
+    }
+  }
+  arp(freq, dur, gain, when) {
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime + when;
+    const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(this.musicGain); o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+}
+
+/* ------------------------------ 粒子 / 表演 ------------------------------ */
+class Fx {
+  constructor() { this.parts = []; this.texts = []; this.rings = []; this.shakeAmt = 0; this.flashAmt = 0; this.quality = 1; this.rng = new RNG(99); }
+  burst(x, y, n = 8, opts = {}) {
+    const color = opts.color || '#fff';
+    const speed = opts.speed || 180;
+    const count = Math.round(n * this.quality);
+    for (let i = 0; i < count; i++) {
+      const a = opts.angle != null ? opts.angle + (this.rng.next() - 0.5) * (opts.spread || 1.6) : this.rng.next() * Math.PI * 2;
+      const v = speed * (0.4 + this.rng.next() * 0.9);
+      this.parts.push({
+        x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - (opts.up || 0),
+        life: 0, max: (opts.life || 0.5) * (0.6 + this.rng.next() * 0.7),
+        size: (opts.size || 3) * (0.6 + this.rng.next() * 0.8),
+        color, grav: opts.grav != null ? opts.grav : 420, shape: opts.shape || 'dot', drag: opts.drag || 0.99,
+      });
+    }
+  }
+  text(x, y, str, color = '#fff', size = 22, opts = {}) {
+    this.texts.push({ x, y, str: String(str), color, size, life: 0, max: opts.max || 0.9, vy: opts.vy != null ? opts.vy : -60, vx: opts.vx || 0 });
+    if (this.texts.length > 40) this.texts.shift();
+  }
+  ring(x, y, color = '#fff', r = 10, opts = {}) { this.rings.push({ x, y, color, r, r0: r, life: 0, max: opts.max || 0.45, grow: opts.grow || 120 }); }
+  beam() { /* 预留给技能连接线 */ }
+  shake(n) { this.shakeAmt = Math.min(26, this.shakeAmt + n); }
+  flash(a) { this.flashAmt = Math.max(this.flashAmt, a); }
+  update(dt) {
+    for (let i = this.parts.length - 1; i >= 0; i--) {
+      const p = this.parts[i]; p.life += dt;
+      if (p.life >= p.max) { this.parts.splice(i, 1); continue; }
+      p.vx *= p.drag; p.vy = p.vy * p.drag + p.grav * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+    }
+    for (let i = this.texts.length - 1; i >= 0; i--) {
+      const t = this.texts[i]; t.life += dt;
+      if (t.life >= t.max) { this.texts.splice(i, 1); continue; }
+      t.x += t.vx * dt; t.y += t.vy * dt; t.vy += 130 * dt;
+    }
+    for (let i = this.rings.length - 1; i >= 0; i--) {
+      const r = this.rings[i]; r.life += dt;
+      if (r.life >= r.max) { this.rings.splice(i, 1); continue; }
+      r.r += r.grow * dt;
+    }
+    this.shakeAmt *= Math.exp(-7 * dt); if (this.shakeAmt < 0.2) this.shakeAmt = 0;
+    this.flashAmt *= Math.exp(-6 * dt); if (this.flashAmt < 0.01) this.flashAmt = 0;
+  }
+  draw(ctx) {
+    for (const p of this.parts) {
+      const k = 1 - p.life / p.max;
+      ctx.globalAlpha = Math.max(0, k);
+      ctx.fillStyle = p.color;
+      if (p.shape === 'spark') {
+        ctx.fillRect(p.x - p.size * 0.5, p.y - p.size * 0.5, p.size, p.size * 2.2);
+      } else if (p.shape === 'ring') {
+        ctx.strokeStyle = p.color; ctx.lineWidth = Math.max(1, p.size * 0.5);
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1.4 - k), 0, Math.PI * 2); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (0.4 + k * 0.8), 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+    for (const r of this.rings) {
+      const k = 1 - r.life / r.max;
+      ctx.globalAlpha = Math.max(0, k) * 0.8; ctx.strokeStyle = r.color; ctx.lineWidth = 3 * k + 1;
+      ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    for (const t of this.texts) {
+      const k = t.life / t.max;
+      ctx.globalAlpha = Math.max(0, 1 - k * k);
+      ctx.font = `900 ${t.size}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      ctx.textAlign = 'center'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.55)';
+      ctx.strokeText(t.str, t.x, t.y); ctx.fillStyle = t.color; ctx.fillText(t.str, t.x, t.y);
+    }
+    ctx.globalAlpha = 1;
+  }
+  flashDraw(ctx, W, H) {
+    if (this.flashAmt > 0.01) { ctx.fillStyle = `rgba(255,255,255,${this.flashAmt * 0.5})`; ctx.fillRect(0, 0, W, H); }
+  }
+}
+
+/* ------------------------------ 输入 ------------------------------ */
+class Input {
+  constructor(canvas, layout, handlers) {
+    this.canvas = canvas; this.layout = layout; this.h = handlers;
+    this.active = new Map();
+    this.last = { x: 0, y: 0 };
+    const down = (e) => {
+      const p = this.pt(e); this.active.set(e.pointerId ?? 0, p); this.last = p;
+      this.h.onDown?.(p.x, p.y, e);
+      if (e.pointerId != null && canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+      e.preventDefault();
+    };
+    const move = (e) => {
+      const p = this.pt(e); this.last = p;
+      this.h.onMove?.(p.x, p.y, e);
+      e.preventDefault();
+    };
+    const up = (e) => {
+      const p = this.pt(e); this.h.onUp?.(p.x, p.y, e);
+      this.active.delete(e.pointerId ?? 0);
+      e.preventDefault();
+    };
+    canvas.addEventListener('pointerdown', down, { passive: false });
+    canvas.addEventListener('pointermove', move, { passive: false });
+    canvas.addEventListener('pointerup', up, { passive: false });
+    canvas.addEventListener('pointercancel', up, { passive: false });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('keydown', (e) => {
+      if (this.h.onKey) this.h.onKey(e.key, e);
+    });
+    window.addEventListener('resize', () => layout.resize());
+  }
+  pt(e) {
+    const t = e.touches ? e.touches[0] : e;
+    return this.layout.toDesign(t.clientX, t.clientY);
+  }
+}
+
+return { Layout, Sound, Fx, Input };
+})();
+__m["js/render.js"] = (function(){
+/* =========================================================================
+ * render.js —— 通用 Canvas2D 绘制工具：圆角面板 / 文字 / 按钮 / 进度条 /
+ *               星星 / 渐变背景 / 图标
+ * ========================================================================= */
+const { clamp, easeOutCubic } = __m["js/core.js"];
+
+
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+function rect(ctx, x, y, w, h, fill) {
+  ctx.fillStyle = fill; ctx.fillRect(x, y, w, h);
+}
+function panel(ctx, x, y, w, h, o = {}) {
+  const r = o.r == null ? 18 : o.r;
+  ctx.save();
+  if (o.shadow !== false) {
+    ctx.shadowColor = o.shadowColor || 'rgba(0,0,0,.35)';
+    ctx.shadowBlur = o.shadowBlur == null ? 18 : o.shadowBlur;
+    ctx.shadowOffsetY = o.shadowOffsetY == null ? 6 : o.shadowOffsetY;
+  }
+  roundRect(ctx, x, y, w, h, r);
+  ctx.fillStyle = o.fill || 'rgba(16,20,36,.86)';
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  if (o.stroke) { ctx.lineWidth = o.lineWidth || 2; ctx.strokeStyle = o.stroke; ctx.stroke(); }
+  ctx.restore();
+}
+function text(ctx, str, x, y, o = {}) {
+  ctx.save();
+  const size = o.size || 20;
+  const weight = o.weight || 800;
+  ctx.font = `${weight} ${size}px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif`;
+  ctx.textAlign = o.align || 'left';
+  ctx.textBaseline = o.baseline || 'middle';
+  if (o.stroke) {
+    ctx.lineWidth = o.strokeWidth || Math.max(3, size * 0.16);
+    ctx.strokeStyle = o.stroke;
+    ctx.lineJoin = 'round';
+    ctx.strokeText(str, x, y);
+  }
+  if (o.shadow) { ctx.shadowColor = o.shadow; ctx.shadowBlur = o.shadowBlur || 8; ctx.shadowOffsetY = o.shadowY || 2; }
+  ctx.fillStyle = o.color || '#fff';
+  ctx.fillText(str, x, y);
+  ctx.restore();
+}
+function measure(ctx, str, size, weight = 800) {
+  ctx.font = `${weight} ${size}px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif`;
+  return ctx.measureText(str).width;
+}
+function button(ctx, r, label, o = {}) {
+  const pressed = o.pressed ? 2 : 0;
+  const y = r.y + pressed;
+  ctx.save();
+  if (o.shadow !== false) {
+    ctx.shadowColor = 'rgba(0,0,0,.30)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = o.pressed ? 2 : 6;
+  }
+  roundRect(ctx, r.x, y, r.w, r.h, o.r == null ? 16 : o.r);
+  const g = ctx.createLinearGradient(0, y, 0, y + r.h);
+  if (o.disabled) { g.addColorStop(0, 'rgba(90,96,120,.55)'); g.addColorStop(1, 'rgba(60,66,90,.55)'); }
+  else {
+    g.addColorStop(0, o.fill1 || '#ffd76a'); g.addColorStop(1, o.fill2 || '#f2a33c');
+  }
+  ctx.fillStyle = g; ctx.fill();
+  ctx.shadowColor = 'transparent';
+  if (o.stroke !== false) {
+    roundRect(ctx, r.x, y, r.w, r.h, o.r == null ? 16 : o.r);
+    ctx.lineWidth = o.lineWidth || 2;
+    ctx.strokeStyle = o.disabled ? 'rgba(255,255,255,.14)' : (o.stroke || 'rgba(255,255,255,.55)');
+    ctx.stroke();
+  }
+  // 高光
+  if (!o.disabled && o.gloss !== false) {
+    roundRect(ctx, r.x + 6, y + 4, r.w - 12, r.h * 0.38, 10);
+    ctx.fillStyle = 'rgba(255,255,255,.22)'; ctx.fill();
+  }
+  const size = o.size || Math.min(26, r.h * 0.42);
+  text(ctx, label, r.x + r.w / 2, y + r.h / 2 + 1, {
+    size, color: o.disabled ? 'rgba(255,255,255,.45)' : (o.color || '#3a2408'),
+    align: 'center', weight: 900, shadow: o.textShadow === false ? null : null,
+  });
+  ctx.restore();
+}
+function bar(ctx, x, y, w, h, k, o = {}) {
+  k = clamp(k, 0, 1);
+  roundRect(ctx, x, y, w, h, h / 2); ctx.fillStyle = o.bg || 'rgba(0,0,0,.45)'; ctx.fill();
+  if (k > 0) {
+    roundRect(ctx, x, y, Math.max(h, w * k), h, h / 2);
+    const g = ctx.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, o.c1 || '#ff6b57'); g.addColorStop(1, o.c2 || '#ffd76a');
+    ctx.fillStyle = o.color || g; ctx.fill();
+  }
+  if (o.stroke) { roundRect(ctx, x, y, w, h, h / 2); ctx.lineWidth = 1.5; ctx.strokeStyle = o.stroke; ctx.stroke(); }
+}
+function star(ctx, x, y, r, filled, o = {}) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(o.rot || 0);
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5;
+    const rr = i % 2 === 0 ? r : r * 0.45;
+    ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr);
+  }
+  ctx.closePath();
+  if (filled) {
+    const g = ctx.createLinearGradient(0, -r, 0, r);
+    g.addColorStop(0, o.c1 || '#ffe58a'); g.addColorStop(1, o.c2 || '#ffb52e');
+    ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = Math.max(1.5, r * 0.12); ctx.strokeStyle = o.stroke || 'rgba(120,70,0,.55)'; ctx.stroke();
+  } else {
+    ctx.fillStyle = o.empty || 'rgba(255,255,255,.13)'; ctx.fill();
+    ctx.lineWidth = Math.max(1, r * 0.1); ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.stroke();
+  }
+  ctx.restore();
+}
+function gradient(ctx, W, H, colors, vertical = true) {
+  const g = ctx.createLinearGradient(0, 0, vertical ? 0 : W, vertical ? H : 0);
+  colors.forEach((c, i) => g.addColorStop(i / Math.max(1, colors.length - 1), c));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function vignette(ctx, W, H, strength = 0.35) {
+  const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, `rgba(0,0,0,${strength})`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function icon(ctx, kind, x, y, s, color) {
+  ctx.save(); ctx.translate(x, y); ctx.strokeStyle = color || '#fff'; ctx.fillStyle = color || '#fff';
+  ctx.lineWidth = Math.max(2, s * 0.12); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const h = s / 2;
+  if (kind === 'play') { ctx.beginPath(); ctx.moveTo(-h * 0.55, -h); ctx.lineTo(h * 0.9, 0); ctx.lineTo(-h * 0.55, h); ctx.closePath(); ctx.fill(); }
+  else if (kind === 'pause') { ctx.fillRect(-h * 0.62, -h, h * 0.42, h * 2); ctx.fillRect(h * 0.2, -h, h * 0.42, h * 2); }
+  else if (kind === 'back') { ctx.beginPath(); ctx.moveTo(h * 0.35, -h); ctx.lineTo(-h * 0.55, 0); ctx.lineTo(h * 0.35, h); ctx.stroke(); }
+  else if (kind === 'restart') { ctx.beginPath(); ctx.arc(0, 0, h * 0.72, -Math.PI * 0.35, Math.PI * 1.45); ctx.stroke(); ctx.beginPath(); ctx.moveTo(h * 0.68, -h * 0.55); ctx.lineTo(h * 0.92, h * 0.05); ctx.lineTo(h * 0.28, -h * 0.06); ctx.fill(); }
+  else if (kind === 'gear') {
+    ctx.beginPath(); ctx.arc(0, 0, h * 0.34, 0, Math.PI * 2); ctx.stroke();
+    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; ctx.beginPath(); ctx.moveTo(Math.cos(a) * h * 0.52, Math.sin(a) * h * 0.52); ctx.lineTo(Math.cos(a) * h * 0.92, Math.sin(a) * h * 0.92); ctx.stroke(); }
+  }
+  else if (kind === 'sound') { ctx.beginPath(); ctx.moveTo(-h, -h * 0.35); ctx.lineTo(-h * 0.45, -h * 0.35); ctx.lineTo(h * 0.1, -h * 0.8); ctx.lineTo(h * 0.1, h * 0.8); ctx.lineTo(-h * 0.45, h * 0.35); ctx.lineTo(-h, h * 0.35); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.arc(h * 0.18, 0, h * 0.55, -0.9, 0.9); ctx.stroke(); }
+  else if (kind === 'mute') { ctx.beginPath(); ctx.moveTo(-h, -h * 0.3); ctx.lineTo(-h * 0.3, -h * 0.3); ctx.lineTo(h * 0.3, -h * 0.8); ctx.lineTo(h * 0.3, h * 0.8); ctx.lineTo(-h * 0.3, h * 0.3); ctx.lineTo(-h, h * 0.3); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(h * 0.55, -h * 0.4); ctx.lineTo(h * 1.0, h * 0.4); ctx.moveTo(h * 1.0, -h * 0.4); ctx.lineTo(h * 0.55, h * 0.4); ctx.stroke(); }
+  else if (kind === 'lock') { ctx.fillRect(-h * 0.6, -h * 0.05, h * 1.2, h * 0.85); ctx.beginPath(); ctx.arc(0, -h * 0.05, h * 0.4, Math.PI, 0); ctx.stroke(); }
+  else if (kind === 'home') { ctx.beginPath(); ctx.moveTo(-h, 0); ctx.lineTo(0, -h); ctx.lineTo(h, 0); ctx.stroke(); ctx.fillRect(-h * 0.55, 0, h * 1.1, h * 0.75); }
+  else if (kind === 'star') { ctx.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5; const rr = i % 2 ? h * 0.45 : h; ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr); } ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+}
+function entering(t, dur = 0.35) { return easeOutCubic(clamp(t / dur, 0, 1)); }
+
+return { roundRect, rect, panel, text, measure, button, bar, star, gradient, vignette, icon, entering };
+})();
+__m["js/art.js"] = (function(){
+/* =========================================================================
+ * art.js —— 程序化美术：所有画面零外部素材，按主题调色板实时绘制
+ *   sky / 场景 / 角色 / 建筑 / 投射物 / 拾取物
+ * ========================================================================= */
+const { clamp, TAU, hashString, mulberry32 } = __m["js/core.js"];
+
+const { roundRect, bar } = __m["js/render.js"];
+
+
+const DEF = {
+  sky: ['#101427', '#2b1d3a'], ground: '#3a2d3f', groundDark: '#241a2b',
+  accent: '#ffcf5c', accent2: '#ff7a59', hero: '#8fd3ff', hero2: '#3f7ea8',
+  enemy: '#c85a6a', enemy2: '#7a2f42', gold: '#ffd76a', text: '#ffffff',
+  danger: '#ff5d5d', ok: '#62d68f', ui: 'rgba(16,20,36,.86)', ui2: 'rgba(255,255,255,.12)', ink: '#101427',
+};
+
+function pal(theme) {
+  const p = { ...DEF, ...(theme.palette || {}) };
+  if (!Array.isArray(p.sky)) p.sky = DEF.sky;
+  return p;
+}
+
+function makeArt(theme) {
+  const C = pal(theme);
+  const mood = theme.mood || 'night';
+  const seed = hashString(theme.id || 'theme');
+  const rnd = mulberry32(seed);
+
+  function sky(ctx, W, H, t) {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, C.sky[0]); g.addColorStop(0.65, C.sky[1]); g.addColorStop(1, C.groundDark);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    if (mood === 'space') {
+      for (let i = 0; i < 90; i++) {
+        const x = rnd() * W, y = rnd() * H * 0.8, s = rnd() * 2 + 0.4;
+        ctx.globalAlpha = 0.3 + 0.5 * (0.5 + 0.5 * Math.sin(t * 1.2 + i));
+        ctx.fillStyle = '#fff'; ctx.fillRect(x, y, s, s);
+      }
+      ctx.globalAlpha = 1;
+      const gg = ctx.createRadialGradient(W * 0.78, H * 0.22, 4, W * 0.78, H * 0.22, H * 0.34);
+      gg.addColorStop(0, 'rgba(140,190,255,.55)'); gg.addColorStop(1, 'rgba(140,190,255,0)');
+      ctx.fillStyle = gg; ctx.fillRect(0, 0, W, H);
+    } else if (mood === 'night' || mood === 'dusk') {
+      for (let i = 0; i < 46; i++) {
+        const x = rnd() * W, y = rnd() * H * 0.55, s = rnd() * 1.8 + 0.4;
+        ctx.globalAlpha = 0.25 + 0.5 * (0.5 + 0.5 * Math.sin(t * 0.8 + i * 1.7));
+        ctx.fillStyle = '#fff8e0'; ctx.fillRect(x, y, s, s);
+      }
+      ctx.globalAlpha = 1;
+      const mx = W * 0.8, my = H * 0.18, mr = Math.min(W, H) * 0.075;
+      const mg = ctx.createRadialGradient(mx, my, mr * 0.4, mx, my, mr * 2.6);
+      mg.addColorStop(0, 'rgba(255,245,210,.35)'); mg.addColorStop(1, 'rgba(255,245,210,0)');
+      ctx.fillStyle = mg; ctx.fillRect(mx - mr * 3, my - mr * 3, mr * 6, mr * 6);
+      ctx.fillStyle = '#fff2c4'; ctx.beginPath(); ctx.arc(mx, my, mr, 0, TAU); ctx.fill();
+      ctx.fillStyle = C.sky[1]; ctx.beginPath(); ctx.arc(mx - mr * 0.42, my - mr * 0.3, mr * 0.92, 0, TAU); ctx.fill();
+    } else if (mood === 'underwater') {
+      for (let i = 0; i < 26; i++) {
+        const x = rnd() * W, y = H - ((t * (18 + rnd() * 30) + rnd() * H) % H);
+        ctx.globalAlpha = 0.18 + rnd() * 0.2; ctx.fillStyle = '#dffcff';
+        ctx.beginPath(); ctx.arc(x, y, 2 + rnd() * 5, 0, TAU); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      for (let i = 0; i < 5; i++) {
+        ctx.globalAlpha = 0.06; ctx.fillStyle = '#bff3ff';
+        ctx.beginPath(); ctx.moveTo(rnd() * W, 0); ctx.lineTo(W * 0.3 + i * 80, H); ctx.lineTo(W * 0.3 + i * 80 + 80, H); ctx.closePath(); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    return g;
+  }
+
+  function farLayers(ctx, W, H, t, groundY) {
+    const p1 = groundY - H * 0.16;
+    ctx.fillStyle = 'rgba(0,0,0,.18)';
+    ctx.beginPath(); ctx.moveTo(0, groundY);
+    let x = 0;
+    while (x < W) { const w = 120 + rnd() * 200, h = 20 + rnd() * 70; ctx.lineTo(x, p1 - h * 0.3); ctx.lineTo(x + w * 0.5, p1 - h); ctx.lineTo(x + w, p1 - h * 0.2); x += w; }
+    ctx.lineTo(W, groundY); ctx.closePath(); ctx.fill();
+    // 中景建筑/树剪影
+    const base = groundY - 4;
+    x = -40;
+    while (x < W + 60) {
+      const w = 46 + rnd() * 70, h = 50 + rnd() * 120;
+      ctx.fillStyle = 'rgba(0,0,0,.28)';
+      if (mood === 'underwater') {
+        ctx.beginPath(); ctx.ellipse(x + w / 2, base, w * 0.3, h * 0.5, 0, Math.PI, 0); ctx.fill();
+      } else if (mood === 'forest') {
+        ctx.beginPath(); ctx.moveTo(x + w / 2, base - h); ctx.lineTo(x + w, base); ctx.lineTo(x, base); ctx.closePath(); ctx.fill();
+      } else {
+        ctx.fillRect(x, base - h, w, h);
+        if (rnd() < 0.6) { ctx.fillStyle = 'rgba(255,220,140,.35)'; for (let k = 0; k < 4; k++) ctx.fillRect(x + 8 + rnd() * (w - 20), base - h + 10 + rnd() * (h - 24), 5, 7); }
+      }
+      x += w + 12;
+    }
+    // 地平线
+    const gg = ctx.createLinearGradient(0, groundY, 0, H);
+    gg.addColorStop(0, C.ground); gg.addColorStop(1, C.groundDark);
+    ctx.fillStyle = gg; ctx.fillRect(0, groundY, W, H - groundY);
+    ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.fillRect(0, groundY, W, 3);
+  }
+
+  /* 静态背景离屏缓存：标题/结算场景每帧重绘天空+远景是主要开销 */
+  let bgCache = null, bgKey = '';
+  function scene(ctx, W, H, t, o = {}) {
+    const groundY = o.groundY == null ? H * 0.72 : o.groundY;
+    const key = W + 'x' + H + '@' + Math.round(groundY);
+    if (key !== bgKey) {
+      bgCache = null; bgKey = key;
+      const doc = ctx.canvas && ctx.canvas.ownerDocument;
+      if (doc && doc.createElement) {
+        const dpr = Math.min(2, (ctx.getTransform && ctx.getTransform().a) || 1);
+        const c = doc.createElement('canvas');
+        c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+        const g = c.getContext('2d');
+        if (g) {
+          g.setTransform(dpr, 0, 0, dpr, 0, 0);
+          sky(g, W, H, 0);
+          farLayers(g, W, H, 0, groundY);
+          bgCache = c;
+        }
+      }
+    }
+    if (bgCache) { ctx.drawImage(bgCache, 0, 0, W, H); return groundY; }
+    sky(ctx, W, H, t);
+    farLayers(ctx, W, H, t, groundY);
+    return groundY;
+  }
+
+  /* 角色：身体 + 头 + 眼睛 + 武器/配件。kind: hero|enemy|boss，role: melee|ranged|mage|heal|tank */
+  function char(ctx, x, y, s, o = {}) {
+    const kind = o.kind || 'hero';
+    const facing = o.facing == null ? 1 : o.facing;
+    const role = o.role || 'melee';
+    const tier = o.tier || 1;
+    const t = o.t || 0;
+    const flash = o.flash ? 1 : 0;
+    // 受击白闪：直接换配色（原来的 source-atop 叠加会在不透明背景上糊出一个白方块）
+    const body = flash ? '#f2f4ff' : kind === 'enemy' ? C.enemy : kind === 'boss' ? C.enemy2 : C.hero;
+    const body2 = flash ? '#ffffff' : kind === 'enemy' ? C.enemy2 : kind === 'boss' ? C.danger : C.hero2;
+    const hash = hashString((o.name || '') + tier);
+    ctx.save(); ctx.translate(x, y);
+    const breathe = Math.sin(t * 6 + hash) * 0.02;
+    ctx.scale(s * facing, s * (1 + breathe));
+    // 影子
+    ctx.save(); ctx.scale(1 / Math.max(0.2, facing), 1); ctx.globalAlpha = 0.28; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(0, 2, 13, 4.5, 0, 0, TAU); ctx.fill(); ctx.restore();
+    // 腿（走路摆）
+    const walk = o.moving ? Math.sin(t * 9 + hash) * 3 : 0;
+    ctx.fillStyle = body2;
+    ctx.fillRect(-6, -8 + walk * 0.3, 4.5, 9 + walk * 0.4);
+    ctx.fillRect(2, -8 - walk * 0.3, 4.5, 9 - walk * 0.4);
+    // 身体
+    const bh = 18 + tier * 1.6;
+    roundRect(ctx, -9, -8 - bh, 18, bh, 7); ctx.fillStyle = body; ctx.fill();
+    // 披风/护甲
+    ctx.fillStyle = body2;
+    roundRect(ctx, -11, -8 - bh + 4, 22, 5, 2); ctx.fill();
+    if (kind !== 'enemy') { ctx.fillStyle = C.accent; ctx.fillRect(-3, -8 - bh + 4, 6, 3); }
+    // 头
+    const hy = -8 - bh - 8;
+    ctx.beginPath(); ctx.arc(0, hy, 9.5, 0, TAU); ctx.fillStyle = kind === 'enemy' ? body2 : '#f6d3aa'; ctx.fill();
+    if (kind === 'enemy') { ctx.strokeStyle = C.enemy2; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(0, hy, 9.5, 0, TAU); ctx.stroke(); }
+    // 眼睛
+    ctx.fillStyle = kind === 'enemy' ? '#2a0d14' : '#222';
+    ctx.beginPath(); ctx.arc(3.4, hy - 1, 1.5, 0, TAU); ctx.fill();
+    if (kind === 'boss') {
+      ctx.fillStyle = C.gold;
+      ctx.beginPath(); ctx.moveTo(-9, hy - 9); ctx.lineTo(-5, hy - 15); ctx.lineTo(-1, hy - 10); ctx.lineTo(3, hy - 16); ctx.lineTo(7, hy - 9); ctx.closePath(); ctx.fill();
+    } else if (hash % 3 === 0) {
+      ctx.fillStyle = kind === 'enemy' ? C.enemy : C.accent2;
+      roundRect(ctx, -10, hy - 10, 20, 4, 2); ctx.fill();
+    } else if (hash % 3 === 1) {
+      ctx.fillStyle = kind === 'enemy' ? C.enemy2 : C.accent;
+      ctx.beginPath(); ctx.arc(0, hy - 10, 5, Math.PI, 0); ctx.fill();
+    }
+    // 武器
+    ctx.strokeStyle = kind === 'enemy' ? C.enemy2 : C.accent2; ctx.lineWidth = 2.4; ctx.lineCap = 'round';
+    if (role === 'ranged') {
+      ctx.beginPath(); ctx.arc(10, -8 - bh * 0.55, 7, -1.2, 1.2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(13.5, -8 - bh * 0.55 - 7.6); ctx.lineTo(13.5, -8 - bh * 0.55 + 7.6); ctx.stroke();
+    } else if (role === 'mage') {
+      ctx.beginPath(); ctx.moveTo(10, -8 - bh * 0.2); ctx.lineTo(14, -8 - bh - 14); ctx.stroke();
+      ctx.fillStyle = C.accent; ctx.beginPath(); ctx.arc(14, -8 - bh - 16, 3.4, 0, TAU); ctx.fill();
+    } else if (role === 'heal') {
+      ctx.beginPath(); ctx.moveTo(9, -8 - bh * 0.6); ctx.lineTo(17, -8 - bh * 0.6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(13, -8 - bh * 0.6 - 4); ctx.lineTo(13, -8 - bh * 0.6 + 4); ctx.stroke();
+    } else if (role === 'tank') {
+      ctx.fillStyle = C.ui2; roundRect(ctx, 6, -8 - bh * 0.85, 9, bh * 0.8, 4); ctx.fill();
+      ctx.strokeStyle = C.accent; ctx.strokeRect(6, -8 - bh * 0.85, 9, bh * 0.8);
+    } else {
+      ctx.beginPath(); ctx.moveTo(10, -8 - bh * 0.45); ctx.lineTo(19, -8 - bh * 0.95); ctx.stroke();
+    }
+    ctx.restore();
+    if (o.hp != null && o.hp < 1) {
+      const w = Math.max(18, s * 22);
+      ctx.save(); ctx.translate(x - w / 2, y - s * 46); bar(ctx, 0, 0, w, 4, o.hp, { c1: C.danger, c2: C.ok }); ctx.restore();
+    }
+  }
+
+  function building(ctx, x, y, w, h, o = {}) {
+    const lvl = o.level || 1;
+    const t = o.t || 0;
+    const kind = o.kind || 0;
+    ctx.save(); ctx.translate(x, y);
+    ctx.globalAlpha = 0.3; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(0, 0, w * 0.5, 6, 0, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+    // 基座
+    ctx.fillStyle = C.groundDark; roundRect(ctx, -w / 2, -8, w, 8, 3); ctx.fill();
+    // 主体
+    const g = ctx.createLinearGradient(0, -h, 0, 0);
+    g.addColorStop(0, C.ui2); g.addColorStop(1, C.groundDark);
+    roundRect(ctx, -w * 0.42, -h, w * 0.84, h, 6); ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = o.selected ? C.accent : 'rgba(255,255,255,.18)'; roundRect(ctx, -w * 0.42, -h, w * 0.84, h, 6); ctx.stroke();
+    if (kind === 0) { // 兵营
+      ctx.fillStyle = C.accent2; ctx.beginPath(); ctx.moveTo(-w * 0.42, -h); ctx.lineTo(0, -h - 14); ctx.lineTo(w * 0.42, -h); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = C.ink; roundRect(ctx, -w * 0.14, -h * 0.55, w * 0.28, h * 0.55, 3); ctx.fill();
+    } else if (kind === 1) { // 箭塔
+      roundRect(ctx, -w * 0.2, -h - 26, w * 0.4, 26, 3); ctx.fillStyle = C.accent2; ctx.fill();
+      ctx.fillStyle = C.ink; for (let i = 0; i < 3; i++) { ctx.fillRect(-w * 0.2 + i * w * 0.15, -h - 26, w * 0.07, 8); }
+    } else if (kind === 2) { // 法阵
+      ctx.strokeStyle = C.accent; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, -h - 8, 8 + Math.sin(t * 3) * 1.5, 0, TAU); ctx.stroke();
+      ctx.fillStyle = C.accent; ctx.globalAlpha = 0.8; ctx.beginPath(); ctx.arc(0, -h - 8, 3, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+    } else { // 墙
+      ctx.fillStyle = C.groundDark; for (let i = 0; i < 3; i++) ctx.fillRect(-w * 0.45, -h + i * (h / 3), w * 0.9, h / 6);
+    }
+    // 等级角标
+    if (lvl > 1) {
+      ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(w * 0.36, -h + 4, 9, 0, TAU); ctx.fill();
+      ctx.fillStyle = C.ink; ctx.font = '900 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(lvl), w * 0.36, -h + 4);
+    }
+    ctx.restore();
+    if (o.hp != null && o.hp < 1) { ctx.save(); ctx.translate(x - w * 0.42, y - h - 10); bar(ctx, 0, 0, w * 0.84, 4, o.hp); ctx.restore(); }
+    if (o.cd != null) { ctx.save(); ctx.translate(x - w * 0.42, y - 6); bar(ctx, 0, 0, w * 0.84, 3, 1 - o.cd, { c1: C.accent, c2: C.gold }); ctx.restore(); }
+  }
+
+  function projectile(ctx, x, y, o = {}) {
+    const kind = o.kind || 'arrow';
+    ctx.save(); ctx.translate(x, y);
+    if (kind === 'arrow') {
+      const a = o.angle || 0; ctx.rotate(a);
+      ctx.strokeStyle = o.color || C.accent; ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.moveTo(-10, 0); ctx.lineTo(8, 0); ctx.stroke();
+      ctx.fillStyle = o.color || C.accent; ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(5, -4); ctx.lineTo(5, 4); ctx.closePath(); ctx.fill();
+    } else if (kind === 'orb') {
+      const r = o.r || 6;
+      const g = ctx.createRadialGradient(0, 0, 1, 0, 0, r * 2);
+      g.addColorStop(0, '#fff'); g.addColorStop(0.4, o.color || C.accent); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 2, 0, TAU); ctx.fill();
+    } else if (kind === 'shock') {
+      ctx.strokeStyle = o.color || C.hero; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, o.r || 10, 0, TAU); ctx.stroke();
+    } else {
+      ctx.fillStyle = o.color || C.gold;
+      ctx.beginPath(); ctx.arc(0, 0, o.r || 4, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function pickup(ctx, x, y, o = {}) {
+    const t = o.t || 0, r = o.r || 9;
+    ctx.save(); ctx.translate(x, y + Math.sin(t * 3) * 3);
+    ctx.globalAlpha = 0.9;
+    const g = ctx.createRadialGradient(0, 0, 1, 0, 0, r * 2);
+    g.addColorStop(0, o.color || C.gold); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 2, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = o.color || C.gold;
+    if (o.shape === 'gem') { ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(r * 0.8, 0); ctx.lineTo(0, r); ctx.lineTo(-r * 0.8, 0); ctx.closePath(); ctx.fill(); }
+    else if (o.shape === 'star') { ctx.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5; const rr = i % 2 ? r * 0.5 : r; ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr); } ctx.closePath(); ctx.fill(); }
+    else { ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill(); }
+    ctx.restore();
+  }
+
+  function flag(ctx, x, y, color, t) {
+    ctx.save(); ctx.translate(x, y);
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -54); ctx.stroke();
+    ctx.fillStyle = color || C.accent;
+    ctx.beginPath(); ctx.moveTo(0, -54);
+    for (let i = 0; i <= 8; i++) ctx.lineTo(i * 4.4, -54 + Math.sin(t * 5 + i * 0.7) * 2.4 + i * 0.4);
+    for (let i = 8; i >= 0; i--) ctx.lineTo(i * 4.4, -54 + Math.sin(t * 5 + i * 0.7) * 2.4 + 14 - i * 0.4);
+    ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+
+  return { C, mood, sky, scene, char, building, projectile, pickup, flag };
+}
+
+return { makeArt };
+})();
+__m["js/app.js"] = (function(){
+/* =========================================================================
+ * app.js —— 游戏外壳：画布/自适应/固定步长主循环/场景栈（标题-选关-战斗-结算-
+ *           设置-说明）/存档/音频解锁/暂停/调试 API
+ * 规则层（js/rules/*.js）只负责玩法；这里负责所有通用壳层。
+ * ========================================================================= */
+const { clamp, makeSave, RNG, fmt, fmtTime } = __m["js/core.js"];
+
+const { Layout, Sound, Fx, Input } = __m["js/platform.js"];
+
+const { makeArt } = __m["js/art.js"];
+
+const R = __m["js/render.js"];
+
+
+const STEP = 1 / 60;
+
+class App {
+  constructor(canvas, content, createRule) {
+    this.canvas = canvas;
+    this.content = content;
+    this.createRule = createRule;
+    this.cfg = content.config || {};
+    this.portrait = (content.orientation || 'landscape') === 'portrait';
+    this.W = this.portrait ? 720 : 1280;
+    this.H = this.portrait ? 1280 : 720;
+    this.layout = new Layout(canvas, this.W, this.H);
+    this.art = makeArt(content.theme || {});
+    this.audio = new Sound(content.theme || {});
+    this.fx = new Fx();
+    this.save = makeSave(content.slug || 'game', content.saveDefaults || {});
+    this.ctx = canvas.getContext('2d');
+    this.scene = 'title';
+    this.sceneT = 0;
+    this.acc = 0; this.last = 0; this.fps = 60; this.frames = 0; this.fpsT = 0;
+    this.buttons = [];
+    this.toasts = [];
+    this.levelId = 0; this.rule = null; this.pendingResult = null; this.finishing = 0;
+    this.paused = false;
+    this.started = false;
+    this.demoT = 0;
+    this.tipsSeen = this.save.data.tipsSeen || {};
+    this.inputBound = false;
+    this.loop = this.loop.bind(this);
+    this.input = null;
+  }
+  mount() {
+    this.layout.resize();
+    this.layout.applyTransform(this.ctx);
+    this.input = new Input(this.canvas, this.layout, {
+      onDown: (x, y) => this.onDown(x, y),
+      onMove: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('move', x, y); },
+      onUp: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('up', x, y); },
+      onKey: (k) => this.onKey(k),
+    });
+    document.addEventListener('visibilitychange', () => { if (document.hidden && this.scene === 'play') this.setPaused(true); });
+    requestAnimationFrame(this.loop);
+  }
+  begin() {
+    if (this.started) return;
+    this.started = true;
+    if (!this.audio.ensure()) { /* 无音频环境也继续 */ }
+    for (const k of ['music', 'sfx']) this.audio.setMuted(k, !this.save.settings[k]);
+    if (this.save.data.firstRun) { this.save.data.firstRun = false; this.save.flush(); }
+  }
+  /* ---------------------------- 主循环 ---------------------------- */
+  loop(ts) {
+    if (!this.last) this.last = ts;
+    let dt = (ts - this.last) / 1000; this.last = ts;
+    if (dt > 0.25) dt = 0.25;
+    this.frames++; this.fpsT += dt;
+    if (this.fpsT >= 0.5) { this.fps = this.frames / this.fpsT; this.frames = 0; this.fpsT = 0; }
+    this.sceneT += dt; this.demoT += dt;
+    if (this.scene === 'play' && !this.paused) {
+      this.acc += dt;
+      let guard = 0;
+      while (this.acc >= STEP && guard < 4) { this.step(STEP); this.acc -= STEP; guard++; }
+      if (guard >= 4) this.acc = 0;
+    } else {
+      this.acc = 0;
+    }
+    this.fx.update(dt);
+    this.updateToasts(dt);
+    if (this.scene === 'play' && this.rule && !this.paused) {
+      if (this.rule.status !== 'playing' && this.finishing === 0) {
+        this.finishing = 0.0001;
+        this.audio.sfx(this.rule.status === 'won' ? 'win' : 'lose');
+      }
+      if (this.finishing > 0) {
+        this.finishing += dt;
+        if (this.finishing > 1.25) this.finishLevel();
+      }
+    }
+    this.render(dt);
+    requestAnimationFrame(this.loop);
+  }
+  step(dt) {
+    if (!this.rule) return;
+    this.rule.update(dt);
+  }
+  /* 测试用：用机器人策略快进 n 秒（不渲染），返回当前状态 */
+  fastForward(seconds) {
+    if (this.scene !== 'play' || !this.rule) return 'no-play';
+    const steps = Math.round((seconds || 60) * 60);
+    for (let i = 0; i < steps && this.rule.status === 'playing'; i++) {
+      if (this.rule.bot) this.rule.bot(1 / 60);
+      this.step(1 / 60);
+    }
+    return this.rule.status;
+  }
+  /* ---------------------------- 场景 ---------------------------- */
+  go(scene) {
+    this.scene = scene; this.sceneT = 0; this.buttons = [];
+    if (scene !== 'play') { this.paused = false; }
+    if (scene === 'title') this.audio.musicGain && this.audio.musicGain.gain.setTargetAtTime(0.26, this.audio.ctx.currentTime, 0.2);
+  }
+  startLevel(id) {
+    const levels = this.content.levels || [];
+    const lv = levels.find((l) => l.id === id) || levels[0];
+    if (!lv) return false;
+    this.levelId = lv.id;
+    this.finishing = 0; this.pendingResult = null; this.paused = false;
+    const self = this;
+    const svc = {
+      app: this, content: this.content, level: lv, levelId: lv.id,
+      W: this.W, H: this.H, portrait: this.portrait,
+      rng: new RNG(this.content.slug + ':' + lv.id + ':' + (this.cfg.seed || 0)),
+      save: this.save, audio: this.audio, fx: this.fx, art: this.art,
+      finish: (payload) => { if (!self.pendingResult) self.pendingResult = payload || {}; },
+      toast: (msg) => self.toast(msg),
+      replay: () => self.startLevel(self.levelId),
+      next: () => self.nextLevel(),
+    };
+    this.rule = this.createRule(svc);
+    this.rule.init();
+    this.scene = 'play'; this.sceneT = 0; this.buttons = [];
+    this.audio.ensure();
+    return true;
+  }
+  finishLevel() {
+    const win = this.rule && this.rule.status === 'won';
+    const payload = this.pendingResult || (this.rule && this.rule.result && this.rule.result()) || {};
+    const stars = win ? clamp(Math.round(payload.stars == null ? 1 : payload.stars), 1, 3) : 0;
+    if (win) {
+      this.save.complete(this.levelId, stars, payload.score || 0);
+      if (payload.coins) this.save.addCoins(payload.coins);
+      this.save.data.playSec = (this.save.data.playSec || 0) + Math.round(this.sceneT);
+      this.save.flush();
+    }
+    this.result = { win, stars, payload };
+    this.scene = 'result'; this.sceneT = 0; this.buttons = [];
+  }
+  nextLevel() {
+    const levels = this.content.levels || [];
+    const i = levels.findIndex((l) => l.id === this.levelId);
+    if (i >= 0 && i + 1 < levels.length) return this.startLevel(levels[i + 1].id);
+    this.go('levels');
+    return false;
+  }
+  setPaused(v) { this.paused = !!v; this.sceneT = this.sceneT; this.buttons = []; }
+  toast(msg) {
+    if (!msg) return;
+    this.toasts.push({ msg: String(msg), life: 0, max: 2.2 });
+    if (this.toasts.length > 3) this.toasts.shift();
+  }
+  updateToasts(dt) {
+    for (let i = this.toasts.length - 1; i >= 0; i--) { this.toasts[i].life += dt; if (this.toasts[i].life >= this.toasts[i].max) this.toasts.splice(i, 1); }
+  }
+  /* ---------------------------- 输入分发 ---------------------------- */
+  onDown(x, y) {
+    this.begin();
+    for (let i = this.buttons.length - 1; i >= 0; i--) {
+      const b = this.buttons[i];
+      if (b.disabled) continue;
+      if (x >= b.r.x && x <= b.r.x + b.r.w && y >= b.r.y && y <= b.r.y + b.r.h) {
+        this.audio.sfx('click');
+        this.vibrate(8);
+        b.fn();
+        return;
+      }
+    }
+    if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('down', x, y);
+  }
+  onKey(k) {
+    if (this.scene === 'play') {
+      if (k === 'Escape' || k === 'p' || k === 'P') { this.setPaused(!this.paused); }
+      if (this.rule && !this.paused) this.rule.pointer('key', 0, 0, k);
+    } else if (k === 'Escape' || k === 'Backspace') {
+      if (this.scene === 'levels' || this.scene === 'settings' || this.scene === 'howto') this.go('title');
+      if (this.scene === 'result') this.go('levels');
+    } else if (k === 'Enter' || k === ' ') {
+      if (this.scene === 'title') this.startLevel(this.save.data.unlocked || 1);
+      if (this.scene === 'result' && this.result) { this.result.win ? this.nextLevel() : this.startLevel(this.levelId); }
+    }
+  }
+  vibrate(ms) { try { if (this.save.settings.haptic && navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+
+  /* ---------------------------- 绘制 ---------------------------- */
+  render(dt) {
+    const ctx = this.ctx, W = this.W, H = this.H;
+    this.layout.applyTransform(ctx);
+    ctx.clearRect(0, 0, W, H);
+    this.buttons = [];
+    if (this.scene === 'title') this.drawTitle(ctx);
+    else if (this.scene === 'levels') this.drawLevels(ctx);
+    else if (this.scene === 'play') this.drawPlay(ctx);
+    else if (this.scene === 'result') this.drawResult(ctx);
+    else if (this.scene === 'settings') this.drawSettings(ctx);
+    else if (this.scene === 'howto') this.drawHowto(ctx);
+    if (this.paused && this.scene === 'play') this.drawPause(ctx);
+    this.drawToasts(ctx);
+    this.fx.flashDraw(ctx, W, H);
+  }
+  mkButton(ctx, r, label, fn, o = {}) {
+    this.buttons.push({ r, fn, disabled: !!o.disabled });
+    R.button(ctx, r, label, o);
+  }
+  drawBg(ctx, groundY) {
+    this.art.scene(ctx, this.W, this.H, this.demoT, { groundY });
+  }
+  drawTitle(ctx) {
+    const W = this.W, H = this.H, t = this.demoT, P = this.portrait;
+    const groundY = P ? H * 0.42 : H * 0.60;
+    this.drawBg(ctx, groundY);
+    const pg = ctx.createLinearGradient(0, 0, 0, H);
+    pg.addColorStop(0, 'rgba(0,0,0,.10)'); pg.addColorStop(1, 'rgba(0,0,0,.55)');
+    ctx.fillStyle = pg; ctx.fillRect(0, 0, W, H);
+    // 角色展示（在标题与按钮之间）
+    const art = this.art, n = 4;
+    for (let i = 0; i < n; i++) {
+      const x = W * (0.5 + (i - (n - 1) / 2) * (P ? 0.19 : 0.15));
+      const y = groundY + (i % 2 ? 0 : 8);
+      art.char(ctx, x, y, (P ? 2.1 : 1.8) + (i === 1 ? 0.25 : 0), {
+        kind: i === 2 ? 'enemy' : 'hero', role: ['melee', 'ranged', 'mage', 'heal'][i],
+        facing: i === 2 ? -1 : 1, t: t + i, name: 'showcase' + i, moving: true,
+      });
+    }
+    const titleSize = Math.min(W * 0.085, 92);
+    ctx.save();
+    ctx.font = `900 ${titleSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const y = P ? H * 0.16 : H * 0.21;
+    ctx.lineWidth = titleSize * 0.14; ctx.strokeStyle = 'rgba(8,10,20,.85)'; ctx.lineJoin = 'round';
+    ctx.strokeText(this.content.title, W / 2, y);
+    const tg = ctx.createLinearGradient(0, y - titleSize / 2, 0, y + titleSize / 2);
+    tg.addColorStop(0, '#fff6d8'); tg.addColorStop(0.5, '#ffd76a'); tg.addColorStop(1, '#ff9f43');
+    ctx.fillStyle = tg; ctx.fillText(this.content.title, W / 2, y);
+    ctx.restore();
+    R.text(ctx, this.content.tagline || this.content.subtitle || '', W / 2, y + titleSize * 0.86, {
+      size: Math.min(P ? 20 : 23, W * 0.02), color: 'rgba(255,255,255,.85)', align: 'center', weight: 600,
+    });
+    // 开始按钮
+    const bw = Math.min(W * (P ? 0.62 : 0.34), 460), bh = Math.min(86, H * 0.12);
+    const bx = W / 2 - bw / 2, by = P ? H * 0.50 : H * 0.66;
+    const nextId = Math.min(this.save.data.unlocked || 1, (this.content.levels || []).length || 1);
+    const label = (this.save.data.totalClears || 0) > 0 ? `继续游戏 · 第${nextId}关` : '开始游戏';
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, label, () => this.startLevel(nextId), { size: Math.min(30, bh * 0.38) });
+    // 次级按钮
+    const sw = Math.min(W * (P ? 0.26 : 0.17), 220), sh = Math.min(58, H * 0.085), gap = 16;
+    const y2 = by + bh + (P ? 28 : 18);
+    const labels = [['关卡', () => this.go('levels')], ['玩法', () => this.go('howto')], ['设置', () => this.go('settings')]];
+    const totalW = labels.length * sw + (labels.length - 1) * gap;
+    labels.forEach(([lb, fn], i) => {
+      const x = W / 2 - totalW / 2 + i * (sw + gap);
+      this.mkButton(ctx, { x, y: y2, w: sw, h: sh }, lb, fn, {
+        fill1: 'rgba(255,255,255,.20)', fill2: 'rgba(255,255,255,.10)', color: '#fff', stroke: 'rgba(255,255,255,.35)', size: Math.min(22, sh * 0.4),
+      });
+    });
+    R.text(ctx, '程序化美术 / 合成音频 / 本地存档', W / 2, H - (P ? 40 : 20), { size: 14, color: 'rgba(255,255,255,.45)', align: 'center', weight: 500 });
+  }
+  /* 选关 */
+  drawLevels(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    const titleY = this.portrait ? 76 : 64;
+    R.text(ctx, '选择关卡', W / 2, titleY, { size: 38, align: 'center', color: '#fff', stroke: 'rgba(0,0,0,.5)' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const stars = this.save.totalStars(), maxStars = (this.content.levels || []).length * 3;
+    R.text(ctx, `★ ${stars} / ${maxStars}`, W - 26, titleY, { size: 20, align: 'right', color: '#ffd76a' });
+    const levels = this.content.levels || [];
+    const chapters = this.content.chapters || [{ name: '关卡', levels: levels.map((l) => l.id) }];
+    const top = this.portrait ? 120 : 104;
+    const bottomPad = 24;
+    const rowH = Math.min(this.portrait ? 200 : 108, (H - top - bottomPad) / chapters.length);
+    chapters.forEach((ch, ci) => {
+      const y0 = top + ci * rowH;
+      R.text(ctx, `${ci + 1}. ${ch.name}`, 30, y0 + 14, { size: Math.min(20, rowH * 0.22), color: 'rgba(255,255,255,.7)', weight: 700 });
+      const perRow = this.portrait ? 5 : Math.min(10, ch.levels.length);
+      const cellW = Math.min(this.portrait ? 118 : 104, (W - 60) / perRow);
+      const cellH = Math.min(cellW, rowH - 34);
+      ch.levels.forEach((id, i) => {
+        const col = i % perRow, row = Math.floor(i / perRow);
+        const x = 30 + col * ((W - 60) / perRow) + ((W - 60) / perRow - cellW) / 2;
+        const y = y0 + 28 + row * (cellH + 10);
+        this.levelCell(ctx, levels.find((l) => l.id === id) || { id, name: '第' + id + '关' }, x, y, cellW, cellH);
+      });
+      if (this.portrait && ci === 0) { /* 保持布局 */ }
+    });
+  }
+  levelCell(ctx, lv, x, y, w, h) {
+    const unlocked = this.save.isUnlocked(lv.id);
+    const st = this.save.starOf(lv.id);
+    const r = { x, y, w, h };
+    const isBoss = !!lv.boss;
+    R.panel(ctx, x, y, w, h, {
+      r: 14, fill: unlocked ? (isBoss ? 'rgba(120,40,60,.85)' : 'rgba(32,40,64,.9)') : 'rgba(24,26,36,.75)',
+      stroke: st > 0 ? 'rgba(255,215,106,.65)' : 'rgba(255,255,255,.12)', shadowBlur: 10,
+    });
+    if (!unlocked) {
+      R.icon(ctx, 'lock', x + w / 2, y + h * 0.42, Math.min(w, h) * 0.28, 'rgba(255,255,255,.3)');
+      R.text(ctx, '未解锁', x + w / 2, y + h * 0.78, { size: Math.min(13, w * 0.16), color: 'rgba(255,255,255,.35)', align: 'center' });
+    } else {
+      R.text(ctx, String(lv.id), x + w / 2, y + h * 0.38, { size: Math.min(26, w * 0.3), color: '#fff', align: 'center', weight: 900 });
+      R.text(ctx, lv.name || '', x + w / 2, y + h * 0.64, { size: Math.min(11, w * 0.137), color: 'rgba(255,255,255,.62)', align: 'center', weight: 600 });
+      for (let i = 0; i < 3; i++) R.star(ctx, x + w / 2 + (i - 1) * Math.min(17, w * 0.2), y + h * 0.84, Math.min(7, w * 0.09), i < st);
+    }
+    this.buttons.push({ r, fn: () => { if (unlocked) this.startLevel(lv.id); } });
+  }
+  /* 战斗场景 */
+  drawPlay(ctx) {
+    const W = this.W, H = this.H, rule = this.rule;
+    if (!rule) return;
+    rule.drawWorld(ctx, this.demoT);
+    this.fx.draw(ctx);
+    // 关卡横幅
+    const intro = clamp(1 - this.sceneT / 1.6, 0, 1);
+    if (intro > 0) {
+      const lv = this.content.levels.find((l) => l.id === this.levelId) || {};
+      ctx.globalAlpha = Math.min(1, intro * 1.6);
+      R.text(ctx, `第 ${this.levelId} 关`, W / 2, H * 0.16, { size: 22, align: 'center', color: 'rgba(255,255,255,.8)', weight: 700 });
+      R.text(ctx, lv.name || '', W / 2, H * 0.16 + 34, { size: 34, align: 'center', color: '#fff', stroke: 'rgba(0,0,0,.6)' });
+      ctx.globalAlpha = 1;
+    }
+    rule.drawHUD(ctx, this.demoT);
+    // 暂停按钮：始终最后画，保证在各玩法 HUD 之上可点
+    const pr = { x: W - 74, y: 16, w: 56, h: 56 };
+    R.panel(ctx, pr.x, pr.y, pr.w, pr.h, { r: 14, fill: 'rgba(10,14,24,.62)', stroke: 'rgba(255,255,255,.2)' });
+    R.icon(ctx, 'pause', pr.x + pr.w / 2, pr.y + pr.h / 2, 22, '#fff');
+    this.buttons.push({ r: pr, fn: () => this.setPaused(true) });
+  }
+  /* 暂停 */
+  drawPause(ctx) {
+    const W = this.W, H = this.H;
+    ctx.fillStyle = 'rgba(6,8,16,.66)'; ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W * 0.46, 520), ph = Math.min(H * 0.62, 520);
+    const px = W / 2 - pw / 2, py = H / 2 - ph / 2;
+    R.panel(ctx, px, py, pw, ph, { fill: 'rgba(20,24,44,.97)', stroke: 'rgba(255,255,255,.2)', r: 24 });
+    R.text(ctx, '已暂停', W / 2, py + 58, { size: 34, align: 'center', color: '#fff' });
+    const bw = pw * 0.66, bh = 60, bx = W / 2 - bw / 2;
+    let by = py + 116;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '继续', () => this.setPaused(false), { size: 26 });
+    by += bh + 14;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '重开本关', () => this.startLevel(this.levelId), {
+      fill1: 'rgba(255,255,255,.2)', fill2: 'rgba(255,255,255,.1)', color: '#fff', stroke: 'rgba(255,255,255,.3)', size: 24,
+    });
+    by += bh + 14;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '返回选关', () => { this.setPaused(false); this.go('levels'); }, {
+      fill1: 'rgba(255,255,255,.2)', fill2: 'rgba(255,255,255,.1)', color: '#fff', stroke: 'rgba(255,255,255,.3)', size: 24,
+    });
+    by += bh + 26;
+    // 音乐/音效开关
+    const tw = (pw - 60) / 2;
+    this.toggle(ctx, px + 20, by, tw, 50, '音乐', this.save.settings.music, (v) => { this.save.setSetting('music', v); this.audio.setMuted('music', !v); });
+    this.toggle(ctx, px + 40 + tw, by, tw, 50, '音效', this.save.settings.sfx, (v) => { this.save.setSetting('sfx', v); this.audio.setMuted('sfx', !v); });
+  }
+  toggle(ctx, x, y, w, h, label, on, fn) {
+    R.panel(ctx, x, y, w, h, { r: 12, fill: on ? 'rgba(255,215,106,.16)' : 'rgba(255,255,255,.06)', stroke: on ? 'rgba(255,215,106,.6)' : 'rgba(255,255,255,.16)', shadow: false });
+    R.text(ctx, label, x + 14, y + h / 2, { size: 18, color: '#fff', weight: 700 });
+    const kr = { x: x + w - 62, y: y + 9, w: 46, h: h - 18 };
+    R.roundRect(ctx, kr.x, kr.y, kr.w, kr.h, kr.h / 2); ctx.fillStyle = on ? '#ffd76a' : 'rgba(255,255,255,.2)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(kr.x + (on ? kr.w - kr.h / 2 : kr.h / 2), kr.y + kr.h / 2, kr.h / 2 - 3, 0, Math.PI * 2);
+    ctx.fillStyle = on ? '#241a06' : '#888'; ctx.fill();
+    this.buttons.push({ r: { x, y, w, h }, fn: () => fn(!on) });
+  }
+  /* 结算 */
+  drawResult(ctx) {
+    const W = this.W, H = this.H, res = this.result || { win: false, stars: 0, payload: {} };
+    const t = this.sceneT;
+    this.drawBg(ctx, H * 0.78);
+    ctx.fillStyle = 'rgba(6,8,16,.62)'; ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W * 0.56, 620), ph = Math.min(H * 0.78, 640);
+    const px = W / 2 - pw / 2, py = H / 2 - ph / 2 + 10;
+    const pop = R.entering(t, 0.4);
+    ctx.save(); ctx.translate(W / 2, py + ph / 2); ctx.scale(0.9 + pop * 0.1, 0.9 + pop * 0.1); ctx.translate(-W / 2, -(py + ph / 2));
+    R.panel(ctx, px, py, pw, ph, { fill: 'rgba(22,26,46,.97)', stroke: res.win ? 'rgba(255,215,106,.5)' : 'rgba(255,93,93,.4)', r: 26, shadowBlur: 32 });
+    R.text(ctx, res.win ? '通关！' : '再战一次', W / 2, py + 62, { size: 42, align: 'center', color: res.win ? '#ffd76a' : '#ff8a8a', stroke: 'rgba(0,0,0,.5)' });
+    R.text(ctx, `第 ${this.levelId} 关`, W / 2, py + 100, { size: 18, align: 'center', color: 'rgba(255,255,255,.55)' });
+    for (let i = 0; i < 3; i++) {
+      const st = res.win && i < res.stars;
+      const delay = 0.35 + i * 0.16;
+      const k = clamp((t - delay) / 0.3, 0, 1);
+      if (k <= 0) continue;
+      ctx.save(); ctx.translate(W / 2 + (i - 1) * 74, py + 170); ctx.scale(0.4 + k * 0.9, 0.4 + k * 0.9); ctx.globalAlpha = k;
+      R.star(ctx, 0, 0, 30, st, { c1: '#fff3b0', c2: '#ffb52e' });
+      ctx.restore();
+    }
+    const p = res.payload || {};
+    const rows = [
+      ['得分', fmt(p.score || 0)],
+      [this.content.resultKillLabel || '击杀', fmt(p.kills || 0)],
+      ['用时', fmtTime(p.time || this.sceneT)],
+    ];
+    rows.forEach(([k1, v], i) => {
+      const y = py + 234 + i * 30;
+      R.text(ctx, k1, px + pw * 0.22, y, { size: 18, color: 'rgba(255,255,255,.55)', weight: 600 });
+      R.text(ctx, v, px + pw * 0.78, y, { size: 20, color: '#fff', align: 'right', weight: 800 });
+    });
+    const bw = pw * 0.68, bh = 62, bx = W / 2 - bw / 2;
+    let by = py + ph - 200;
+    if (res.win) {
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '下一关', () => this.nextLevel(), { size: 26 });
+      by += bh + 12;
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: 52 }, '重玩', () => this.startLevel(this.levelId), {
+        fill1: 'rgba(255,255,255,.18)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 22,
+      });
+      by += 52 + 12;
+    } else {
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh + 8 }, '再来一次', () => this.startLevel(this.levelId), { size: 26 });
+      by += bh + 20;
+    }
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: 48 }, '返回选关', () => this.go('levels'), {
+      fill1: 'rgba(255,255,255,.06)', fill2: 'rgba(255,255,255,.03)', color: 'rgba(255,255,255,.8)', stroke: 'rgba(255,255,255,.16)', size: 20,
+    });
+    ctx.restore();
+  }
+  /* 设置 */
+  drawSettings(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    R.text(ctx, '设置', W / 2, 66, { size: 38, align: 'center', color: '#fff' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const w = Math.min(W * 0.62, 620), x = W / 2 - w / 2;
+    let y = 140;
+    this.toggle(ctx, x, y, w, 62, '音乐', this.save.settings.music, (v) => { this.save.setSetting('music', v); this.audio.setMuted('music', !v); }); y += 74;
+    this.toggle(ctx, x, y, w, 62, '音效', this.save.settings.sfx, (v) => { this.save.setSetting('sfx', v); this.audio.setMuted('sfx', !v); }); y += 74;
+    this.toggle(ctx, x, y, w, 62, '震动反馈', this.save.settings.haptic, (v) => this.save.setSetting('haptic', v)); y += 90;
+    this.mkButton(ctx, { x, y, w, h: 56 }, '清除存档', () => { if (typeof confirm === 'function' && confirm('确定清空本机进度？')) { this.save.reset(); this.toast('已清除'); } }, {
+      fill1: 'rgba(255,93,93,.35)', fill2: 'rgba(200,40,60,.35)', color: '#fff', stroke: 'rgba(255,120,120,.5)', size: 22,
+    });
+    y += 76;
+    R.text(ctx, '存档只保存在本机浏览器；换设备不会同步。', W / 2, y, { size: 15, align: 'center', color: 'rgba(255,255,255,.45)', weight: 500 });
+    R.text(ctx, '程序化美术 + 程序化音乐音效', W / 2, y + 26, { size: 15, align: 'center', color: 'rgba(255,255,255,.35)', weight: 500 });
+  }
+  /* 说明 */
+  drawHowto(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    R.text(ctx, '玩法说明', W / 2, 66, { size: 38, align: 'center', color: '#fff' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const help = this.content.help || {};
+    const w = Math.min(W * 0.74, 820), x = W / 2 - w / 2;
+    R.panel(ctx, x, 116, w, H - 168, { r: 20, fill: 'rgba(255,255,255,.055)', stroke: 'rgba(255,255,255,.12)', shadow: false });
+    let y = 152;
+    R.text(ctx, '目标', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of wrapLines(ctx, help.goal || '', w - 56, 18)) { R.text(ctx, line, x + 28, y, { size: 18, color: '#fff', weight: 600 }); y += 28; }
+    y += 14;
+    R.text(ctx, '操作', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of help.controls || []) { R.text(ctx, '· ' + line, x + 28, y, { size: 17, color: 'rgba(255,255,255,.85)', weight: 600 }); y += 28; }
+    y += 14;
+    R.text(ctx, '小提示', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of help.tips || []) {
+      for (const l2 of wrapLines(ctx, '· ' + line, w - 56, 17)) { R.text(ctx, l2, x + 28, y, { size: 17, color: 'rgba(255,255,255,.7)', weight: 500 }); y += 26; }
+    }
+  }
+  drawToasts(ctx) {
+    const W = this.W;
+    this.toasts.forEach((tt, i) => {
+      const k = tt.life / tt.max;
+      const a = k < 0.15 ? k / 0.15 : k > 0.75 ? (1 - k) / 0.25 : 1;
+      ctx.globalAlpha = Math.max(0, Math.min(1, a));
+      const w = Math.min(W * 0.6, R.measure(ctx, tt.msg, 20, 700) + 56);
+      const y = this.H * 0.2 + i * 52;
+      R.panel(ctx, W / 2 - w / 2, y, w, 44, { r: 22, fill: 'rgba(10,14,24,.86)', stroke: 'rgba(255,215,106,.35)', shadowBlur: 8 });
+      R.text(ctx, tt.msg, W / 2, y + 22, { size: 19, align: 'center', color: '#ffe9b0', weight: 700 });
+      ctx.globalAlpha = 1;
+    });
+  }
+}
+
+function wrapLines(ctx, str, maxW, size) {
+  const out = [];
+  let line = '';
+  for (const ch of String(str)) {
+    const test = line + ch;
+    if (R.measure(ctx, test, size, 600) > maxW && line) { out.push(line); line = ch; }
+    else line = test;
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+return { App };
+})();
+__m["js/content.js"] = (function(){
+/* =========================================================================
+ * content.js —— 全部玩法内容数据（由「游戏工坊」生成，可直接手改）
+ * 主题：都市夜景 · 基因：idle · 关卡：24
+ * 改完运行：node tools/build-single.mjs && node tools/check.mjs
+ * ========================================================================= */
+
+const CONTENT = {
+  "slug": "idle-dev",
+  "genre": "idle",
+  "title": "三十天开播",
+  "subtitle": "都市夜景 · 保安的生意",
+  "tagline": "按天经营，选节目/员工/升级，滚大收益，在期限内达成目标。",
+  "orientation": "portrait",
+  "config": {
+    "seed": 1245917665,
+    "maxLevel": 24
+  },
+  "theme": {
+    "id": "city",
+    "name": "都市夜景",
+    "mood": "dusk",
+    "palette": {
+      "sky": [
+        "#141a33",
+        "#3a2440"
+      ],
+      "ground": "#2b2f44",
+      "groundDark": "#171a28",
+      "accent": "#ffd76a",
+      "accent2": "#ff5d8f",
+      "hero": "#7fe0ff",
+      "hero2": "#3a7fa0",
+      "enemy": "#ff7a90",
+      "enemy2": "#8a2a44",
+      "gold": "#ffd76a",
+      "danger": "#ff4d4d",
+      "ok": "#5ce0a0",
+      "ui": "rgba(16,20,36,.88)",
+      "ui2": "rgba(255,255,255,.12)",
+      "ink": "#12162a",
+      "text": "#ffffff"
+    },
+    "music": {
+      "root": -7,
+      "scale": [
+        0,
+        2,
+        4,
+        7,
+        11
+      ],
+      "tempo": 96
+    },
+    "vocab": {
+      "hero": [
+        "外卖员",
+        "保安",
+        "店主",
+        "司机",
+        "工程师",
+        "护士"
+      ],
+      "enemy": [
+        "醉汉",
+        "流氓",
+        "催单客",
+        "假顾客",
+        "物业",
+        "城管"
+      ],
+      "boss": [
+        "城管队长",
+        "黑心房东",
+        "拆迁队长",
+        "酒局天王"
+      ],
+      "building": [
+        "便利店",
+        "奶茶店",
+        "停车场",
+        "物业楼",
+        "充电桩",
+        "天台"
+      ],
+      "item": [
+        "快递",
+        "奶茶",
+        "车钥匙",
+        "外卖箱",
+        "门禁卡",
+        "优惠券",
+        "啤酒",
+        "账单"
+      ],
+      "place": [
+        "老小区",
+        "步行街",
+        "写字楼",
+        "地铁口",
+        "天台",
+        "夜市"
+      ],
+      "power": [
+        "喇叭",
+        "快速通道",
+        "电梯",
+        "报警",
+        "优惠券雨",
+        "路灯"
+      ],
+      "currency": "营业额"
+    }
+  },
+  "chapters": [
+    {
+      "name": "老小区篇",
+      "levels": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "name": "步行街篇",
+      "levels": [
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "name": "写字楼篇",
+      "levels": [
+        9,
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "name": "地铁口篇",
+      "levels": [
+        13,
+        14,
+        15,
+        16
+      ]
+    },
+    {
+      "name": "天台篇",
+      "levels": [
+        17,
+        18,
+        19,
+        20
+      ]
+    },
+    {
+      "name": "夜市篇",
+      "levels": [
+        21,
+        22,
+        23,
+        24
+      ]
+    }
+  ],
+  "help": {
+    "goal": "30 天为一轮：每天花行动点招人或升级，点「开始营业」结算当日收益。第 30 天结束时，营业额与粉丝都达到目标即通关；中途发不出工资或租金就算破产失败。",
+    "controls": [
+      "点员工卡「招募」：花行动点 + 铜钱雇人，自动产出",
+      "点下方员工头像：花行动点 + 铜钱升级（最高 Lv.5）",
+      "点「升级场地」：加容量、加单价，但每日租金变高",
+      "点节目按钮：当天收入/粉丝加成（每天限一次）",
+      "点「开始营业」进入当日结算，结算面板里点「下一天」继续"
+    ],
+    "tips": [
+      "前 3 天先招满场地容量，收入才会滚起来",
+      "留足第二天的工资与租金，欠费会直接破产",
+      "粉丝越多收入越高（上限 +90%），主播值得早招",
+      "节目只在当天生效，安排在能回本的日子",
+      "第 30 天结算后才判定胜负，最后几天别再乱花钱",
+      "星级看营业额超出目标的幅度：超 8% 两星、超 22% 三星",
+      "键盘：空格=营业/下一天，1~4=招募，U=升级场地"
+    ]
+  },
+  "defs": {
+    "roles": [
+      {
+        "id": "staff",
+        "name": "外卖员",
+        "cost": 38,
+        "rate": 3,
+        "fans": 0.24,
+        "wage": 3,
+        "role": "melee",
+        "color": "#7fe0ff",
+        "desc": "基础店员，便宜稳产"
+      },
+      {
+        "id": "host",
+        "name": "保安",
+        "cost": 88,
+        "rate": 3.4,
+        "fans": 1.05,
+        "wage": 6,
+        "role": "ranged",
+        "color": "#ffd76a",
+        "desc": "前台主播，粉丝增长快"
+      },
+      {
+        "id": "tech",
+        "name": "店主",
+        "cost": 152,
+        "rate": 5.8,
+        "fans": 0.46,
+        "wage": 9,
+        "role": "mage",
+        "color": "#ff5d8f",
+        "desc": "技术骨干，单人产出最高"
+      },
+      {
+        "id": "star",
+        "name": "司机",
+        "cost": 268,
+        "rate": 8.8,
+        "fans": 0.8,
+        "wage": 15,
+        "role": "tank",
+        "color": "#ffd76a",
+        "desc": "明星大咖，产出粉丝全能"
+      }
+    ],
+    "venues": [
+      {
+        "name": "便利店",
+        "cap": 2,
+        "price": 1,
+        "rent": 8,
+        "upCost": 120,
+        "base": 2
+      },
+      {
+        "name": "奶茶店",
+        "cap": 3,
+        "price": 1.14,
+        "rent": 15,
+        "upCost": 210,
+        "base": 3
+      },
+      {
+        "name": "停车场",
+        "cap": 4,
+        "price": 1.3,
+        "rent": 24,
+        "upCost": 360,
+        "base": 4
+      },
+      {
+        "name": "物业楼",
+        "cap": 5,
+        "price": 1.48,
+        "rent": 36,
+        "upCost": 600,
+        "base": 5
+      },
+      {
+        "name": "充电桩",
+        "cap": 6,
+        "price": 1.68,
+        "rent": 52,
+        "upCost": 0,
+        "base": 6
+      }
+    ],
+    "shows": [
+      {
+        "id": "boom",
+        "name": "喇叭",
+        "cost": 40,
+        "incomeMul": 1.75,
+        "fansMul": 1,
+        "desc": "今日收入 ×1.75"
+      },
+      {
+        "id": "live",
+        "name": "快速通道",
+        "cost": 34,
+        "incomeMul": 1,
+        "fansMul": 2.2,
+        "desc": "今日粉丝 ×2.2"
+      },
+      {
+        "id": "party",
+        "name": "电梯",
+        "cost": 58,
+        "incomeMul": 1.25,
+        "fansMul": 1.4,
+        "wageFree": 1,
+        "desc": "收入 ×1.25、粉丝 ×1.4、免当日工资"
+      }
+    ],
+    "events": [
+      {
+        "id": "rush",
+        "title": "旺季客流",
+        "text": "街上人潮涌来，怎么接？",
+        "opts": [
+          {
+            "label": "加价收割",
+            "coins": 42,
+            "fans": -10,
+            "ap": 0
+          },
+          {
+            "label": "薄利涨粉",
+            "coins": 10,
+            "fans": 30,
+            "ap": 0
+          }
+        ]
+      },
+      {
+        "id": "viral",
+        "title": "网红探店",
+        "text": "一位博主上门，要合作吗？",
+        "opts": [
+          {
+            "label": "请他直播",
+            "coins": -36,
+            "fans": 20,
+            "incomeMul": 1.5,
+            "ap": 0
+          },
+          {
+            "label": "婉拒送礼",
+            "coins": -12,
+            "fans": 8,
+            "ap": 1
+          }
+        ]
+      },
+      {
+        "id": "rain",
+        "title": "暴雨停电",
+        "text": "设备跳闸，只能二选一。",
+        "opts": [
+          {
+            "label": "花钱抢修",
+            "coins": -40,
+            "incomeMul": 1.2,
+            "ap": 0
+          },
+          {
+            "label": "提前歇业",
+            "coins": 0,
+            "fans": -8,
+            "ap": 1
+          }
+        ]
+      },
+      {
+        "id": "supplier",
+        "title": "供货商来访",
+        "text": "一批快递低价出，吃下吗？",
+        "opts": [
+          {
+            "label": "整批吃下",
+            "coins": -50,
+            "fans": 6,
+            "incomeMul": 1.45,
+            "ap": 0
+          },
+          {
+            "label": "只要样品",
+            "coins": 6,
+            "fans": 14,
+            "ap": 0
+          }
+        ]
+      },
+      {
+        "id": "rival",
+        "title": "同行挖人",
+        "text": "隔壁店想挖你的员工，怎么谈？",
+        "opts": [
+          {
+            "label": "加薪留人",
+            "coins": -30,
+            "fans": 12,
+            "incomeMul": 1.15,
+            "ap": 0
+          },
+          {
+            "label": "放人拿补偿",
+            "coins": 55,
+            "fans": -14,
+            "ap": 0
+          }
+        ]
+      },
+      {
+        "id": "festival",
+        "title": "节日庆典",
+        "text": "要不要报名参加市集？",
+        "opts": [
+          {
+            "label": "摊费换客流",
+            "coins": -28,
+            "fans": 26,
+            "incomeMul": 1.3,
+            "ap": 0
+          },
+          {
+            "label": "留店稳经营",
+            "coins": 16,
+            "fans": 0,
+            "ap": 1
+          }
+        ]
+      }
+    ]
+  },
+  "levels": [
+    {
+      "id": 1,
+      "chapter": 1,
+      "name": "老小区开张",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1,
+      "startCoins": 80,
+      "target": 2320,
+      "fanTarget": 100,
+      "eventDays": [
+        6,
+        8,
+        12,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1,
+        "fan": 100
+      }
+    },
+    {
+      "id": 2,
+      "chapter": 1,
+      "name": "夜市夜市",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.05,
+      "startCoins": 95,
+      "target": 2538,
+      "fanTarget": 109,
+      "eventDays": [
+        6,
+        12,
+        18,
+        20,
+        22,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.012,
+        "fan": 109
+      }
+    },
+    {
+      "id": 3,
+      "chapter": 1,
+      "name": "天台旺季",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.1,
+      "startCoins": 110,
+      "target": 2777,
+      "fanTarget": 118,
+      "eventDays": [
+        6,
+        12,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.024,
+        "fan": 118
+      }
+    },
+    {
+      "id": 4,
+      "chapter": 1,
+      "name": "地铁口淡季",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.15,
+      "startCoins": 126,
+      "target": 3037,
+      "fanTarget": 128,
+      "eventDays": [
+        6,
+        12,
+        18,
+        24,
+        27,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.036,
+        "fan": 128
+      }
+    },
+    {
+      "id": 5,
+      "chapter": 2,
+      "name": "写字楼庆典",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.2,
+      "startCoins": 144,
+      "target": 3455,
+      "fanTarget": 144,
+      "eventDays": [
+        6,
+        12,
+        16,
+        18,
+        20,
+        24,
+        30
+      ],
+      "boss": true,
+      "scale": {
+        "target": 1.047,
+        "fan": 144
+      }
+    },
+    {
+      "id": 6,
+      "chapter": 2,
+      "name": "步行街分号",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.25,
+      "startCoins": 163,
+      "target": 3632,
+      "fanTarget": 152,
+      "eventDays": [
+        6,
+        12,
+        18,
+        22,
+        24,
+        25,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.059,
+        "fan": 152
+      }
+    },
+    {
+      "id": 7,
+      "chapter": 2,
+      "name": "步行街开张",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.3,
+      "startCoins": 182,
+      "target": 3972,
+      "fanTarget": 165,
+      "eventDays": [
+        6,
+        9,
+        12,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.071,
+        "fan": 165
+      }
+    },
+    {
+      "id": 8,
+      "chapter": 2,
+      "name": "老小区夜市",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.35,
+      "startCoins": 203,
+      "target": 4342,
+      "fanTarget": 179,
+      "eventDays": [
+        6,
+        12,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.083,
+        "fan": 179
+      }
+    },
+    {
+      "id": 9,
+      "chapter": 3,
+      "name": "夜市旺季",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.4,
+      "startCoins": 224,
+      "target": 4746,
+      "fanTarget": 194,
+      "eventDays": [
+        6,
+        12,
+        18,
+        24,
+        25,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.095,
+        "fan": 194
+      }
+    },
+    {
+      "id": 10,
+      "chapter": 3,
+      "name": "天台淡季",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.45,
+      "startCoins": 247,
+      "target": 5395,
+      "fanTarget": 218,
+      "eventDays": [
+        6,
+        12,
+        18,
+        21,
+        24,
+        28,
+        30
+      ],
+      "boss": true,
+      "scale": {
+        "target": 1.107,
+        "fan": 218
+      }
+    },
+    {
+      "id": 11,
+      "chapter": 3,
+      "name": "地铁口庆典",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.5,
+      "startCoins": 270,
+      "target": 5669,
+      "fanTarget": 229,
+      "eventDays": [
+        6,
+        10,
+        12,
+        14,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.119,
+        "fan": 229
+      }
+    },
+    {
+      "id": 12,
+      "chapter": 3,
+      "name": "写字楼分号",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.55,
+      "startCoins": 295,
+      "target": 6195,
+      "fanTarget": 249,
+      "eventDays": [
+        6,
+        12,
+        15,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.13,
+        "fan": 249
+      }
+    },
+    {
+      "id": 13,
+      "chapter": 4,
+      "name": "写字楼开张",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.6,
+      "startCoins": 320,
+      "target": 6769,
+      "fanTarget": 271,
+      "eventDays": [
+        3,
+        6,
+        7,
+        12,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.142,
+        "fan": 271
+      }
+    },
+    {
+      "id": 14,
+      "chapter": 4,
+      "name": "步行街夜市",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.65,
+      "startCoins": 347,
+      "target": 7395,
+      "fanTarget": 294,
+      "eventDays": [
+        5,
+        6,
+        12,
+        13,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.154,
+        "fan": 294
+      }
+    },
+    {
+      "id": 15,
+      "chapter": 4,
+      "name": "老小区旺季",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.7,
+      "startCoins": 374,
+      "target": 8401,
+      "fanTarget": 329,
+      "eventDays": [
+        6,
+        12,
+        16,
+        18,
+        24,
+        30
+      ],
+      "boss": true,
+      "scale": {
+        "target": 1.166,
+        "fan": 329
+      }
+    },
+    {
+      "id": 16,
+      "chapter": 4,
+      "name": "夜市淡季",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.75,
+      "startCoins": 403,
+      "target": 8824,
+      "fanTarget": 346,
+      "eventDays": [
+        6,
+        7,
+        12,
+        18,
+        24,
+        28,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.178,
+        "fan": 346
+      }
+    },
+    {
+      "id": 17,
+      "chapter": 5,
+      "name": "天台庆典",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.8,
+      "startCoins": 432,
+      "target": 9637,
+      "fanTarget": 376,
+      "eventDays": [
+        6,
+        12,
+        14,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.19,
+        "fan": 376
+      }
+    },
+    {
+      "id": 18,
+      "chapter": 5,
+      "name": "地铁口分号",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.85,
+      "startCoins": 463,
+      "target": 10524,
+      "fanTarget": 408,
+      "eventDays": [
+        5,
+        6,
+        8,
+        12,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.202,
+        "fan": 408
+      }
+    },
+    {
+      "id": 19,
+      "chapter": 5,
+      "name": "地铁口开张",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.9,
+      "startCoins": 494,
+      "target": 11492,
+      "fanTarget": 443,
+      "eventDays": [
+        6,
+        12,
+        18,
+        23,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.213,
+        "fan": 443
+      }
+    },
+    {
+      "id": 20,
+      "chapter": 5,
+      "name": "写字楼夜市",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 1.95,
+      "startCoins": 527,
+      "target": 13049,
+      "fanTarget": 495,
+      "eventDays": [
+        6,
+        12,
+        18,
+        24,
+        25,
+        30
+      ],
+      "boss": true,
+      "scale": {
+        "target": 1.225,
+        "fan": 495
+      }
+    },
+    {
+      "id": 21,
+      "chapter": 6,
+      "name": "步行街旺季",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 2,
+      "startCoins": 560,
+      "target": 13698,
+      "fanTarget": 522,
+      "eventDays": [
+        6,
+        9,
+        12,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.237,
+        "fan": 522
+      }
+    },
+    {
+      "id": 22,
+      "chapter": 6,
+      "name": "老小区淡季",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 2.05,
+      "startCoins": 595,
+      "target": 14954,
+      "fanTarget": 566,
+      "eventDays": [
+        6,
+        12,
+        16,
+        17,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.249,
+        "fan": 566
+      }
+    },
+    {
+      "id": 23,
+      "chapter": 6,
+      "name": "夜市庆典",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 2.1,
+      "startCoins": 630,
+      "target": 16323,
+      "fanTarget": 614,
+      "eventDays": [
+        6,
+        8,
+        9,
+        12,
+        18,
+        24,
+        30
+      ],
+      "boss": false,
+      "scale": {
+        "target": 1.261,
+        "fan": 614
+      }
+    },
+    {
+      "id": 24,
+      "chapter": 6,
+      "name": "天台分号",
+      "days": 30,
+      "ap": 2,
+      "bizSeconds": 3.2,
+      "econMul": 2.15,
+      "startCoins": 667,
+      "target": 18528,
+      "fanTarget": 687,
+      "eventDays": [
+        6,
+        12,
+        15,
+        18,
+        24,
+        30
+      ],
+      "boss": true,
+      "scale": {
+        "target": 1.273,
+        "fan": 687
+      }
+    }
+  ],
+  "saveDefaults": {
+    "seenIntro": false
+  }
+};
+
+return { CONTENT };
+})();
+__m["js/rules/idle.js"] = (function(){
+/* =========================================================================
+ * rules/idle.js —— 放置经营 / 30 天循环
+ *   每天：花行动点招人·升级·上节目 → 点「开始营业」实时结算当日收益
+ *   → 日结面板（工资/租金/净利）→ 下一天；第 30 天达标通关，欠费破产失败
+ * 纯逻辑 update()/bot()：无 DOM、无 Math.random（只用 svc.rng 与本地 vrng）
+ * ========================================================================= */
+const { clamp, fmt, RNG } = __m["js/core.js"];
+
+const R = __m["js/render.js"];
+
+
+const DEF_BIZ = 2.8;          // 每个营业日的实时时长（秒）
+const SETTLE_MIN = 0.8;       // 结算面板最早可点「下一天」
+const SETTLE_AUTO = 2.3;      // 结算面板自动进入下一日
+const MAX_STAFF = 6;          // 场地最大工位
+const FAN_CAP = 300;          // 粉丝加成饱和点（+90%）
+
+function createRule(svc) { const { content, level, W, H, audio, fx, rng } = svc;
+  const art = svc.art;
+  const D = content.defs;
+  const theme = content.theme || {};
+  const P = theme.palette || {};
+  const CUR = (theme.vocab && theme.vocab.currency) || '金币';
+  const days = level.days || 30;
+  const econ = level.econMul || 1;
+  const BIZ = level.bizSeconds || DEF_BIZ;
+  const apMax = level.ap || 2;
+  const nf = (v) => (Math.abs(v) >= 1000 ? fmt(v) : (Math.round(v * 10) / 10).toFixed(1));
+  const vrng = new RNG((content.slug || 'idle') + ':vis:' + level.id);
+  const money = (n) => Math.max(1, Math.round(n * econ));   // 金币量随关卡经济倍率缩放
+  const TARGET = level.target || 1000;
+  const FAN_TARGET = level.fanTarget || 0;
+
+  const CL = { accent: P.accent || '#ffcf5c', accent2: P.accent2 || '#ff7a59',
+    gold: P.gold || '#ffd76a', ok: P.ok || '#62d68f', danger: P.danger || '#ff5d5d',
+    hero: P.hero || '#8fd3ff', hero2: P.hero2 || '#3f7ea8',
+    ui: 'rgba(12,16,30,.86)', ui2: 'rgba(255,255,255,.10)', ink: P.ink || '#0b0f1c', text: P.text || '#fff',
+  };
+  const roleDef = (id) => D.roles.find((r) => r.id === id) || D.roles[0];
+  const venueDef = () => D.venues[st.venue] || D.venues[0];
+  const showDef = (id) => D.shows.find((s) => s.id === id) || null;
+  const lvlMul = (lv) => 1 + 0.45 * (lv - 1);
+  const fanLvlMul = (lv) => 1 + 0.35 * (lv - 1);
+
+  /* ------------------------------ 状态 ------------------------------ */
+  const st = { phase: 'plan',            // plan | biz | settle | event | over
+    day: 1, ap: apMax, coins: level.startCoins || 60, fans: 0,
+    coinsShown: level.startCoins || 60, fansShown: 0, venue: 0, staff: [], uid: 1,
+    bizT: 0, settleT: 0, time: 0, animT: 0, today: { incomeMul: 1, fansMul: 1, wageFree: 0, showId: null, market: 1 },
+    dayCoins: 0, dayFans: 0, dayIncome: 0, dayWage: 0, dayRent: 0, dayNet: 0, rev: 0, revShown: 0,
+    evt: null, evtDay: 0, stars: 0, spend: 0, hires: 0, upgs: 0, showUses: 0,
+    finalRatio: 0, overCoin: 0, floatT: 0, win: false, reason: '', showFx: 0,
+  };
+  const ui = { hire: [], staff: [], venue: null, shows: [], cta: null, settle: null, event: [], bars: {} };
+  let botT = 0;
+
+  /* ------------------------------ 数值模型 ------------------------------ */
+  function rate() { const v = venueDef();
+    let base = v.base, fansRaw = 0, wage = 0;
+    for (const e of st.staff) { const def = roleDef(e.role);
+      base += def.rate * lvlMul(e.level);
+      fansRaw += def.fans * fanLvlMul(e.level);
+      wage += def.wage; }
+    const fanBonus = 1 + Math.min(0.9, st.fans / FAN_CAP);
+    const inc = base * v.price * st.today.incomeMul * fanBonus * econ * st.today.market;
+    const fanRate = fansRaw * st.today.fansMul * econ;
+    const wageCost = st.today.wageFree ? 0 : wage * econ;
+    const rentCost = v.rent * econ;
+    return { inc, fanRate, wage: wageCost, rent: rentCost, base, fanBonus, v }; }
+  const hireCost = (def) => money(def.cost);
+  const upCost = (e) => money(roleDef(e.role).cost * (0.5 + 0.32 * e.level));
+  const venueCost = () => (D.venues[st.venue + 1] ? money(venueDef().upCost) : 0);
+
+  /* ------------------------------ 玩家动作 ------------------------------ */
+  let lastToast = { msg: '', t: -9 };
+  function say(msg) { if (msg === lastToast.msg && st.time - lastToast.t < 1.2) return;
+    lastToast = { msg, t: st.time };
+    svc.toast?.(msg); }
+  function spend(n) { if (st.coins < n) return false; st.coins -= n; st.spend += n; return true; }
+
+  function hire(roleId) { if (st.phase !== 'plan') return false;
+    const def = roleDef(roleId);
+    const v = venueDef();
+    if (st.staff.length >= v.cap) { say('工位已满，先升级场地'); audio.sfx('warn'); return false; }
+    if (st.ap <= 0) { say('行动点用完了'); audio.sfx('warn'); return false; }
+    const c = hireCost(def);
+    if (!spend(c)) { say(`${CUR}不足（${c}）`); audio.sfx('warn'); return false; }
+    st.staff.push({ uid: st.uid++, role: def.id, level: 1, pop: 1 });
+    st.ap--; st.hires++;
+    audio.sfx('build');
+    fx.burst(W / 2 + (st.staff.length - 2) * 46, 512, 14, { color: def.color || CL.gold, up: 90 });
+    fx.text(W / 2, 470, `招募 ${def.name}`, '#ffe9b0', 22);
+    return true; }
+  function upgradeStaff(uid) { if (st.phase !== 'plan') return false;
+    const e = st.staff.find((s) => s.uid === uid);
+    if (!e) return false;
+    if (e.level >= 5) { say('已满级'); return false; }
+    if (st.ap <= 0) { say('行动点用完了'); audio.sfx('warn'); return false; }
+    const c = upCost(e);
+    if (!spend(c)) { say(`${CUR}不足（${c}）`); audio.sfx('warn'); return false; }
+    e.level++; e.pop = 1; st.ap--; st.upgs++;
+    audio.sfx('upgrade');
+    fx.burst(W / 2 + (st.staff.indexOf(e) - 1.5) * 46, 500, 16, { color: CL.gold, up: 120 });
+    fx.text(W / 2, 440, `${roleDef(e.role).name} Lv.${e.level}`, '#ffe9b0', 24);
+    return true; }
+  function upgradeVenue() { if (st.phase !== 'plan') return false;
+    const next = D.venues[st.venue + 1];
+    if (!next) { say('场地已是最高级'); return false; }
+    if (st.ap <= 0) { say('行动点用完了'); audio.sfx('warn'); return false; }
+    const c = venueCost();
+    if (!spend(c)) { say(`${CUR}不足（${c}）`); audio.sfx('warn'); return false; }
+    st.venue++; st.ap--; st.upgs++;
+    audio.sfx('upgrade');
+    fx.burst(W / 2, 500, 26, { color: CL.accent, up: 150 });
+    fx.text(W / 2, 420, `场地升级 · ${next.name}`, '#fff3c4', 26);
+    fx.shake(6);
+    return true; }
+  function useShow(id) { if (st.phase !== 'plan') return false;
+    const def = showDef(id);
+    if (!def) return false;
+    if (st.today.showId) { say('今天已经上过节目'); return false; }
+    const c = money(def.cost);
+    if (!spend(c)) { say(`${CUR}不足（${c}）`); audio.sfx('warn'); return false; }
+    st.today.showId = id;
+    st.today.incomeMul *= def.incomeMul || 1;
+    st.today.fansMul *= def.fansMul || 1;
+    if (def.wageFree) st.today.wageFree = 1;
+    st.showUses++; st.showFx = 1;
+    audio.sfx('spell');
+    fx.ring(W / 2, 430, CL.accent, 14, { grow: 420, max: 0.5 });
+    fx.text(W / 2, 400, def.name, '#ffe9b0', 28);
+    return true; }
+
+  /* ------------------------------ 一天流程 ------------------------------ */
+  function resetToday() { st.today = { incomeMul: 1, fansMul: 1, wageFree: 0, showId: null, market: 0.94 + rng.next() * 0.12 };
+    st.dayCoins = 0; st.dayFans = 0; st.dayWage = 0; st.dayRent = 0; st.dayNet = 0; }
+  function eventForDay(d) { const list = level.eventDays || [];
+    if (!list.includes(d)) return null;
+    return D.events[(d + level.id * 3) % D.events.length]; }
+  function openDay() { st.ap = apMax;
+    resetToday();
+    st.evt = eventForDay(st.day);
+    st.evtDay = st.day;
+    if (st.evt) st.phase = 'event';
+    else st.phase = 'plan'; }
+  function startBiz() { if (st.phase !== 'plan') return false;
+    st.phase = 'biz'; st.bizT = BIZ; st.floatT = 0;
+    audio.sfx('click');
+    return true; }
+  function endBiz() { const r = rate();
+    st.dayWage = Math.round(r.wage);
+    st.dayRent = Math.round(r.rent);
+    const cost = st.dayWage + st.dayRent;
+    const gross = st.dayCoins;
+    st.coins -= cost;
+    st.dayNet = gross - cost;
+    if (st.coins < 0) {
+      // 欠费破产
+      st.overCoin = Math.round(st.coins);
+      st.coins = 0;
+      st.phase = 'settle'; st.settleT = 0;
+      st.reason = '欠费破产';
+      lose();
+      return; }
+    st.phase = 'settle'; st.settleT = 0;
+    audio.sfx('coin');
+    if (gross > 0) fx.text(W / 2, 460, `日入 +${fmt(gross)}`, '#ffd76a', 28); }
+  function nextDay() { if (st.phase !== 'settle') return false;
+    if (st.day >= days) { finalize(); return true; }
+    st.day++;
+    st.phase = 'plan';
+    openDay();
+    audio.sfx('click');
+    return true; }
+  function pickEventOption(i) { if (st.phase !== 'event' || !st.evt) return false;
+    const op = st.evt.opts[i];
+    if (!op) return false;
+    if (op.coins) st.coins = Math.max(0, st.coins + (op.coins > 0 ? money(op.coins) : -money(-op.coins)));
+    if (op.fans) st.fans = Math.max(0, st.fans + op.fans * econ);
+    if (op.ap) st.ap = Math.min(apMax + 2, st.ap + op.ap);
+    if (op.incomeMul) st.today.incomeMul *= op.incomeMul;
+    if (op.fansMul) st.today.fansMul *= op.fansMul;
+    if (op.wageFree) st.today.wageFree = 1;
+    audio.sfx(op.coins > 0 || op.ap > 0 ? 'coin' : 'click');
+    if (op.coins < 0) fx.text(W / 2, 500, `${op.coins > 0 ? '+' : ''}${fmt(money(op.coins))}`, CL.danger, 24);
+    else if (op.coins > 0) fx.text(W / 2, 500, `+${fmt(money(op.coins))}`, CL.gold, 24);
+    if (op.fans) fx.text(W / 2, 540, `${op.fans > 0 ? '+' : ''}${Math.round(op.fans * econ)} 粉丝`, CL.hero, 22);
+    st.evt = null;
+    st.phase = 'plan';
+    return true; }
+  function finalize() { st.phase = 'over';
+    const coinOk = st.rev >= TARGET;
+    const fanOk = st.fans >= FAN_TARGET;
+    st.finalRatio = st.rev / Math.max(1, TARGET);
+    if (coinOk && fanOk) { st.win = true;
+      st.stars = st.finalRatio >= 1.22 ? 3 : st.finalRatio >= 1.08 ? 2 : 1;
+      rule.status = 'won';
+      audio.sfx('win');
+      fx.flash(0.4);
+      svc.finish({ stars: st.stars, score: Math.round(st.rev), coins: 16 + level.id * 7,
+        kills: Math.floor(st.fans), time: st.time, });
+    } else { st.reason = coinOk ? '粉丝不足' : fanOk ? '金币不足' : '双项未达标';
+      lose(); }
+  }
+  function lose() { rule.status = 'lost';
+    audio.sfx('lose');
+    fx.text(W / 2, 420, st.reason || '失败', CL.danger, 30);
+    svc.finish({ stars: 0, score: Math.round(st.rev), coins: 0,
+      kills: Math.floor(st.fans), time: st.time, });
+  }
+
+  /* ------------------------------ 更新 ------------------------------ */
+  function update(dt) { if (rule.status !== 'playing') return;
+    st.time += dt; st.animT += dt;
+    st.coinsShown += (st.coins - st.coinsShown) * Math.min(1, dt * 9);
+    st.revShown += (st.rev - st.revShown) * Math.min(1, dt * 9);
+    st.fansShown += (st.fans - st.fansShown) * Math.min(1, dt * 9);
+    if (Math.abs(st.coins - st.coinsShown) < 0.4) st.coinsShown = st.coins;
+    st.showFx = Math.max(0, st.showFx - dt * 1.6);
+    for (const e of st.staff) if (e.pop > 0) e.pop = Math.max(0, e.pop - dt * 2);
+
+    if (st.phase === 'biz') { const r = rate();
+      const dInc = r.inc * dt, dFan = r.fanRate * dt;
+      st.coins += dInc; st.dayCoins += dInc; st.rev += dInc;
+      st.fans += dFan; st.dayFans += dFan;
+      st.bizT -= dt;
+      // 跳字 / 金币飞起
+      st.floatT -= dt;
+      if (st.floatT <= 0 && dInc > 0) { st.floatT = 0.26;
+        fx.text(W / 2 + vrng.range(-90, 90), 360 + vrng.range(-26, 26), `+${fmt(r.inc * 0.26)}`, '#ffd76a', 20);
+        fx.burst(W / 2 + vrng.range(-60, 60), 400, 3, { color: CL.gold, up: 120, speed: 70 }); }
+      if (st.bizT <= 0) endBiz(); } else if (st.phase === 'settle') {
+      st.settleT += dt;
+      if (st.settleT >= SETTLE_AUTO && rule.status === 'playing') nextDay(); }
+  }
+
+  /* ------------------------------ 绘制：世界 ------------------------------ */
+  const GROUND = 520;
+  function staffPos(i, n) { const span = Math.min(560, 96 * Math.max(1, n - 1) + 60);
+    const step = n <= 1 ? 0 : span / (n - 1);
+    return { x: W / 2 - span / 2 + step * i, y: GROUND + 12 }; }
+  let bgCanvas = null;
+  function buildBg(ctx) { if (bgCanvas || !art) return;
+    const doc = ctx.canvas && ctx.canvas.ownerDocument;
+    if (!doc || !doc.createElement) return;
+    const dpr = Math.min(2, (ctx.getTransform && ctx.getTransform().a) || 1);
+    const c = doc.createElement('canvas');
+    c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+    const g = c.getContext('2d');
+    if (!g) return;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    art.scene(g, W, H, 0, { groundY: GROUND });
+    const vg = g.createLinearGradient(0, 60, 0, H * 0.62);
+    vg.addColorStop(0, 'rgba(0,0,0,.05)'); vg.addColorStop(1, 'rgba(0,0,0,.34)');
+    g.fillStyle = vg; g.fillRect(0, 0, W, H * 0.62);
+    bgCanvas = c; }
+  function drawWorld(ctx, t) { const shake = fx.shakeAmt;
+    ctx.save();
+    if (shake > 0.4) ctx.translate((vrng.next() - 0.5) * shake, (vrng.next() - 0.5) * shake);
+    buildBg(ctx);
+    if (bgCanvas) ctx.drawImage(bgCanvas, 0, 0, W, H);
+    else if (art) art.scene(ctx, W, H, t, { groundY: GROUND });
+    else { ctx.fillStyle = '#141428'; ctx.fillRect(0, 0, W, H); }
+    // 招牌
+    const v = venueDef();
+    if (art) art.flag(ctx, W / 2 - 152, GROUND - 34, CL.accent2, t);
+    if (art) art.building(ctx, W / 2, GROUND, 214, 178, { kind: st.venue % 4, level: st.venue + 1, t, selected: false });
+    // 店面招牌（画在建筑体上，避开顶部 toast 区）
+    R.panel(ctx, W / 2 - 74, GROUND - 142, 148, 46, { r: 10, fill: 'rgba(20,14,10,.82)', stroke: 'rgba(255,207,92,.5)', shadow: false });
+    R.text(ctx, v.name, W / 2, GROUND - 124, { size: 22, color: '#ffe9b0', align: 'center', weight: 900 });
+    R.text(ctx, `Lv.${st.venue + 1} · 工位 ${v.cap}`, W / 2, GROUND - 104, { size: 11, color: 'rgba(255,233,176,.72)', align: 'center', weight: 700 });
+    // 员工
+    const n = st.staff.length;
+    for (let i = 0; i < n; i++) { const e = st.staff[i], def = roleDef(e.role), p = staffPos(i, n);
+      const bob = e.pop > 0 ? Math.sin(e.pop * 12) * 5 : 0;
+      if (art) { art.char(ctx, p.x, p.y - bob, 1.42, {
+          kind: 'hero', role: def.role, name: def.name, tier: e.level, t: t + i * 0.7,
+          facing: 1, moving: st.phase === 'biz', hp: null, });
+      } else { ctx.fillStyle = def.color || CL.hero; ctx.fillRect(p.x - 8, p.y - 24, 16, 24); }
+      R.panel(ctx, p.x - 26, p.y + 2, 52, 20, { r: 10, fill: 'rgba(8,12,22,.72)', stroke: 'rgba(255,255,255,.16)', shadow: false });
+      R.text(ctx, `Lv.${e.level}`, p.x, p.y + 13, { size: 13, color: e.level >= 5 ? CL.gold : '#fff', align: 'center', weight: 800 });
+    }
+    if (n === 0) {
+      R.text(ctx, '还没有员工，点下方「招募」', W / 2, GROUND + 30, { size: 16, color: 'rgba(255,255,255,.55)', align: 'center', weight: 600 });
+    }
+    // 营业中：顾客/粉丝人群
+    if (st.phase === 'biz') { const cnt = Math.min(22, 5 + Math.floor(st.fans / 12));
+      for (let i = 0; i < cnt; i++) { const x = 62 + ((i * 89 + 17) % (W - 124));
+        const y = GROUND - 8 + (i % 3) * 5 + Math.sin(t * 2.6 + i * 1.7) * 2.5;
+        const a = 0.28 + (i % 4) * 0.06;
+        ctx.globalAlpha = a;
+        ctx.fillStyle = i % 3 === 0 ? CL.hero : i % 3 === 1 ? CL.accent : CL.accent2;
+        ctx.beginPath(); ctx.arc(x, y - 13, 4.4, 0, Math.PI * 2); ctx.fill();
+        ctx.fillRect(x - 3.4, y - 9, 6.8, 10); }
+      ctx.globalAlpha = 1;
+      // 金币喷泉
+      for (let i = 0; i < 3; i++) { const x = W / 2 + Math.sin(st.animT * 4 + i * 2.1) * 70;
+        const y = 300 - ((st.animT * 90 + i * 60) % 130);
+        ctx.globalAlpha = 0.85;
+        if (art) art.pickup(ctx, x, y, { color: CL.gold, r: 7, t: st.animT, shape: 'coin' });
+        else { ctx.fillStyle = CL.gold; ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill(); }
+        ctx.globalAlpha = 1; }
+    }
+    ctx.restore(); }
+
+  /* ------------------------------ 绘制：HUD ------------------------------ */
+  const TOP = { y: 14, h: 54 };
+  const P1 = { x: 14, y: TOP.y, w: 150, h: TOP.h };
+  const P2 = { x: 172, y: TOP.y, w: 150, h: TOP.h };
+  const P3 = { x: 330, y: TOP.y, w: 150, h: TOP.h };
+  const P4 = { x: 488, y: TOP.y, w: 150, h: TOP.h };
+  const INFO = { x: 14, y: 556, w: 692, h: 146 };
+  const STAFFP = { x: 14, y: 706, w: 692, h: 166 };
+  const HIREP = { x: 14, y: 876, w: 692, h: 134 };
+  const VEN = { x: 14, y: 1014, w: 692, h: 62 };
+  const SHOWP = { x: 14, y: 1082, w: 692, h: 70 };
+  const CTA = { x: 14, y: 1158, w: 692, h: 98 };
+
+  function pill(ctx, r, label, value, color) {
+    R.panel(ctx, r.x, r.y, r.w, r.h, { r: 16, fill: 'rgba(8,12,24,.8)', stroke: 'rgba(255,255,255,.13)', shadow: false });
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(r.x + 17, r.y + 17, 6.5, 0, Math.PI * 2); ctx.fill();
+    R.text(ctx, label, r.x + 29, r.y + 17, { size: 11, color: 'rgba(255,255,255,.58)', weight: 700 });
+    R.text(ctx, value, r.x + 13, r.y + 38, { size: 19, color: '#fff', weight: 900 }); }
+  function drawTop(ctx, t) { const f = Math.floor;
+    pill(ctx, P1, `现金 ${CUR}`, fmt(f(st.coinsShown)), CL.gold);
+    pill(ctx, P2, '累计营业额', fmt(f(st.revShown)), CL.accent2);
+    pill(ctx, P3, '粉丝', fmt(f(st.fansShown)), CL.hero);
+    // 天数 + 行动点
+    R.panel(ctx, P4.x, P4.y, P4.w, P4.h, { r: 16, fill: 'rgba(8,12,24,.8)', stroke: 'rgba(255,255,255,.13)', shadow: false });
+    R.text(ctx, `第 ${st.day}/${days} 天`, P4.x + 13, P4.y + 19, { size: 16, color: '#fff', weight: 900 });
+    R.text(ctx, '行动点', P4.x + P4.w - 12, P4.y + 19, { size: 10, color: 'rgba(255,255,255,.45)', align: 'right', weight: 600 });
+    for (let i = 0; i < apMax; i++) { ctx.beginPath(); ctx.arc(P4.x + 18 + i * 17, P4.y + 39, 5.5, 0, Math.PI * 2);
+      ctx.fillStyle = i < st.ap ? CL.accent : 'rgba(255,255,255,.14)'; ctx.fill(); }
+  }
+  function statCell(ctx, x, y, label, value, color) {
+    R.text(ctx, label, x, y, { size: 12, color: 'rgba(255,255,255,.55)', weight: 600 });
+    R.text(ctx, value, x, y + 22, { size: 19, color, weight: 900 }); }
+  function drawInfo(ctx, t) { const r = rate();
+    R.panel(ctx, INFO.x, INFO.y, INFO.w, INFO.h, { r: 18, fill: 'rgba(10,14,28,.86)', stroke: 'rgba(255,255,255,.12)', shadow: false });
+    const cw = INFO.w / 4;
+    statCell(ctx, INFO.x + 20, INFO.y + 24, '收入 / 秒', `${r.inc.toFixed(1)}`, CL.gold);
+    statCell(ctx, INFO.x + 20 + cw, INFO.y + 24, '粉丝 / 秒', `${r.fanRate.toFixed(2)}`, CL.hero);
+    statCell(ctx, INFO.x + 20 + cw * 2, INFO.y + 24, '日支出', `-${fmt(r.wage + r.rent)}`, CL.danger);
+    const net = r.inc * BIZ - r.wage - r.rent;
+    statCell(ctx, INFO.x + 20 + cw * 3, INFO.y + 24, '预计日净利', `${net >= 0 ? '+' : ''}${fmt(net)}`, net >= 0 ? CL.ok : CL.danger);
+    const tags = [`行情 ×${st.today.market.toFixed(2)}`, `粉丝加成 +${Math.round(Math.min(0.9, st.fans / FAN_CAP) * 100)}%`];
+    if (st.today.showId) tags.push(`${showDef(st.today.showId).name} 生效中`);
+    R.text(ctx, tags.join('   ·   '), INFO.x + 20, INFO.y + 64, { size: 12, color: 'rgba(255,255,255,.6)', weight: 600 });
+    const bx = INFO.x + 20, bw = INFO.w - 40;
+    R.text(ctx, `营业额 ${fmt(Math.floor(st.rev))} / ${fmt(TARGET)}`, bx, INFO.y + 88, { size: 13, color: CL.accent2, weight: 700 });
+    R.bar(ctx, bx, INFO.y + 97, bw, 12, st.rev / Math.max(1, TARGET), { c1: '#b1523a', c2: '#ffb27a', stroke: 'rgba(255,255,255,.15)' });
+    const fy = FAN_TARGET ? clamp(st.fans / Math.max(1, FAN_TARGET), 0, 1) : 0;
+    R.text(ctx, `粉丝 ${fmt(Math.floor(st.fans))} / ${fmt(FAN_TARGET)}`, bx, INFO.y + 122, { size: 13, color: CL.hero, weight: 700 });
+    R.bar(ctx, bx, INFO.y + 131, bw, 10, fy, { c1: '#3f7ea8', c2: '#9fe8ff', stroke: 'rgba(255,255,255,.15)' }); }
+  function drawStaff(ctx, t) { const v = venueDef();
+    R.panel(ctx, STAFFP.x, STAFFP.y, STAFFP.w, STAFFP.h, { r: 18, fill: 'rgba(10,14,28,.82)', stroke: 'rgba(255,255,255,.1)', shadow: false });
+    R.text(ctx, `员工 ${st.staff.length} / ${v.cap}`, STAFFP.x + 18, STAFFP.y + 20, { size: 15, color: '#fff', weight: 800 });
+    R.text(ctx, '点头像升级（花行动点）', STAFFP.x + STAFFP.w - 18, STAFFP.y + 20, { size: 12, color: 'rgba(255,255,255,.45)', align: 'right', weight: 600 });
+    for (let i = 0; i < ui.staff.length; i++) { const rr = ui.staff[i];
+      if (!rr) continue;
+      const e = st.staff[i];
+      if (i >= v.cap) {
+        R.panel(ctx, rr.x, rr.y, rr.w, rr.h, { r: 12, fill: 'rgba(18,20,32,.55)', stroke: 'rgba(255,255,255,.07)', shadow: false });
+        R.text(ctx, `工位 ${i + 1} · 升级场地解锁`, rr.x + rr.w / 2, rr.y + rr.h / 2, {
+          size: 12, color: 'rgba(255,255,255,.28)', align: 'center', weight: 600, });
+        continue; }
+      if (!e) { ctx.save(); ctx.setLineDash([6, 6]); ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.16)';
+        R.roundRect(ctx, rr.x, rr.y, rr.w, rr.h, 12); ctx.stroke(); ctx.restore();
+        R.text(ctx, '空位', rr.x + rr.w / 2, rr.y + rr.h / 2, { size: 15, color: 'rgba(255,255,255,.28)', align: 'center', weight: 700 });
+        continue; }
+      const def = roleDef(e.role);
+      const maxed = e.level >= 5;
+      const c = upCost(e);
+      const can = !maxed && st.ap > 0 && st.coins >= c && st.phase === 'plan';
+      R.panel(ctx, rr.x, rr.y, rr.w, rr.h, { r: 12, fill: can ? 'rgba(38,50,84,.92)' : 'rgba(24,30,48,.85)',
+        stroke: maxed ? 'rgba(255,215,106,.6)' : can ? 'rgba(255,215,106,.35)' : 'rgba(255,255,255,.12)', shadow: false, });
+      ctx.fillStyle = def.color || CL.hero;
+      ctx.beginPath(); ctx.arc(rr.x + 24, rr.y + rr.h / 2, 13, 0, Math.PI * 2); ctx.fill();
+      R.text(ctx, String(e.level), rr.x + 24, rr.y + rr.h / 2 + 1, { size: 14, color: '#101425', align: 'center', weight: 900 });
+      R.text(ctx, def.name, rr.x + 44, rr.y + 24, { size: 15, color: '#fff', weight: 800 });
+      R.text(ctx, `产出 ${(def.rate * lvlMul(e.level)).toFixed(1)} / 秒`, rr.x + 44, rr.y + 46, { size: 12, color: 'rgba(255,255,255,.6)', weight: 600 });
+      R.text(ctx, maxed ? 'MAX' : `${fmt(c)} ${CUR}`, rr.x + rr.w - 12, rr.y + rr.h / 2, {
+        size: 14, color: maxed ? CL.gold : can ? CL.gold : 'rgba(255,255,255,.45)', align: 'right', weight: 800, });
+    } }
+  function drawHire(ctx, t) {
+    R.panel(ctx, HIREP.x, HIREP.y, HIREP.w, HIREP.h, { r: 18, fill: 'rgba(10,14,28,.82)', stroke: 'rgba(255,255,255,.1)', shadow: false });
+    R.text(ctx, '招募', HIREP.x + 18, HIREP.y + 18, { size: 15, color: '#fff', weight: 800 });
+    R.text(ctx, `工位 ${st.staff.length}/${venueDef().cap}`, HIREP.x + HIREP.w - 18, HIREP.y + 18, { size: 12, color: 'rgba(255,255,255,.45)', align: 'right', weight: 600 });
+    for (const c of ui.hire) { const def = roleDef(c.role);
+      const cost = hireCost(def);
+      const full = st.staff.length >= venueDef().cap;
+      const can = !full && st.ap > 0 && st.coins >= cost && st.phase === 'plan';
+      R.panel(ctx, c.x, c.y, c.w, c.h, { r: 14, fill: can ? 'rgba(52,40,26,.92)' : 'rgba(26,28,42,.75)',
+        stroke: can ? 'rgba(255,215,106,.5)' : 'rgba(255,255,255,.1)', shadow: false, });
+      ctx.fillStyle = def.color || CL.hero;
+      ctx.beginPath(); ctx.arc(c.x + 24, c.y + 26, 12, 0, Math.PI * 2); ctx.fill();
+      R.text(ctx, def.name, c.x + 44, c.y + 20, { size: 16, color: can ? '#fff' : 'rgba(255,255,255,.55)', weight: 800 });
+      R.text(ctx, `${(def.rate * venueDef().price).toFixed(1)} 收益 / 秒`, c.x + 12, c.y + 48, {
+        size: 12, color: can ? 'rgba(255,255,255,.7)' : 'rgba(255,255,255,.4)', weight: 600, });
+      R.text(ctx, `粉丝 +${def.fans.toFixed(2)}/秒`, c.x + 12, c.y + 66, {
+        size: 11, color: can ? 'rgba(143,211,255,.85)' : 'rgba(255,255,255,.35)', weight: 600, });
+      R.text(ctx, full ? '工位满' : `${fmt(cost)} ${CUR}`, c.x + c.w / 2, c.y + 88, {
+        size: 14, color: can ? CL.gold : full ? 'rgba(255,255,255,.35)' : 'rgba(255,93,93,.8)', align: 'center', weight: 800, });
+    } }
+  function drawVenueBtn(ctx, t) { const next = D.venues[st.venue + 1];
+    const c = venueCost();
+    const can = !!next && st.ap > 0 && st.coins >= c && st.phase === 'plan';
+    R.button(ctx, VEN, next ? `升级场地 · ${next.name}` : '场地已满级', {
+      disabled: !can, size: 20, shadow: false, fill1: can ? CL.accent : '#5a6078', fill2: can ? '#e8a33a' : '#4a5066',
+      color: can ? '#33230a' : 'rgba(255,255,255,.5)', });
+    if (next) {
+      R.text(ctx, `容量 ${venueDef().cap}→${next.cap} · 单价 +${Math.round((next.price / venueDef().price - 1) * 100)}% · 租金 ${fmt(next.rent * econ)}`, VEN.x + 16, VEN.y + VEN.h - 13, {
+        size: 12, color: can ? 'rgba(50,32,8,.8)' : 'rgba(255,255,255,.4)', weight: 700, });
+      R.text(ctx, `${fmt(c)} ${CUR}`, VEN.x + VEN.w - 16, VEN.y + VEN.h / 2, {
+        size: 17, color: can ? '#33230a' : 'rgba(255,255,255,.45)', align: 'right', weight: 900, });
+    } }
+  function drawShows(ctx, t) { for (let i = 0; i < ui.shows.length; i++) {
+      const b = ui.shows[i];
+      const def = D.shows[i];
+      const cost = money(def.cost);
+      const used = !!st.today.showId;
+      const can = !used && st.coins >= cost && st.phase === 'plan';
+      R.panel(ctx, b.x, b.y, b.w, b.h, { r: 14, fill: can ? 'rgba(40,34,58,.92)' : 'rgba(22,24,36,.8)',
+        stroke: can ? 'rgba(199,155,255,.45)' : 'rgba(255,255,255,.1)', shadow: false, });
+      R.text(ctx, def.name, b.x + b.w / 2, b.y + 17, { size: 17, color: can ? '#fff' : 'rgba(255,255,255,.5)', align: 'center', weight: 900 });
+      R.text(ctx, def.desc, b.x + b.w / 2, b.y + 36, { size: 11, color: can ? 'rgba(255,255,255,.65)' : 'rgba(255,255,255,.35)', align: 'center', weight: 600 });
+      R.text(ctx, used ? '今日已用' : `${fmt(cost)} ${CUR}`, b.x + b.w / 2, b.y + 53, {
+        size: 13, color: used ? 'rgba(255,255,255,.35)' : can ? CL.accent : 'rgba(255,93,93,.8)', align: 'center', weight: 800,
+      }); }
+  }
+  function drawCTA(ctx, t) { if (st.phase === 'biz') {
+      R.panel(ctx, CTA.x, CTA.y, CTA.w, CTA.h, { r: 18, fill: 'rgba(20,26,44,.92)', stroke: 'rgba(255,215,106,.4)', shadow: false });
+      R.text(ctx, `营业中 · ${CUR} ${fmt(st.dayCoins)}`, CTA.x + 22, CTA.y + 30, { size: 22, color: CL.gold, weight: 900 });
+      R.text(ctx, `粉丝 +${fmt(st.dayFans)}`, CTA.x + CTA.w - 22, CTA.y + 30, { size: 16, color: CL.hero, align: 'right', weight: 800 });
+      R.bar(ctx, CTA.x + 22, CTA.y + 56, CTA.w - 44, 22, 1 - st.bizT / BIZ, { c1: '#c9971f', c2: '#ffe06a', stroke: 'rgba(255,255,255,.2)' });
+      return; }
+    const can = st.phase === 'plan';
+    R.button(ctx, CTA, can ? '开始营业' : st.phase === 'settle' ? '结算中…' : '准备中…', { disabled: !can, size: 30, shadow: false,
+    });
+    if (can) { R.text(ctx, `今日收入预计 +${fmt(rate().inc * BIZ)} ${CUR}`, CTA.x + 24, CTA.y + 30, {
+        size: 13, color: 'rgba(50,32,8,.75)', weight: 700, });
+      R.text(ctx, `行动点 ${st.ap} / ${apMax}`, CTA.x + CTA.w - 24, CTA.y + 30, {
+        size: 13, color: 'rgba(50,32,8,.75)', align: 'right', weight: 700, });
+      R.text(ctx, '点这里结算当日（未用行动点会浪费）', CTA.x + CTA.w / 2, CTA.y + 82, {
+        size: 12, color: 'rgba(50,32,8,.6)', align: 'center', weight: 600, });
+    } }
+  function countUp(target, delay, dur) { const k = clamp((st.settleT - delay) / Math.max(0.01, dur), 0, 1);
+    return target * (1 - Math.pow(1 - k, 2.2)); }
+  function drawSettle(ctx) { const k = clamp(st.settleT / 0.22, 0, 1);
+    ctx.fillStyle = `rgba(6,8,16,${0.66 * k})`; ctx.fillRect(0, 70, W, H - 70);
+    const pw = 640, ph = 588, px = (W - pw) / 2, py = 318;
+    ctx.save(); ctx.translate(W / 2, py + ph / 2); ctx.scale(0.94 + 0.06 * k, 0.94 + 0.06 * k); ctx.translate(-W / 2, -(py + ph / 2));
+    R.panel(ctx, px, py, pw, ph, { r: 26, fill: 'rgba(20,24,44,.97)', stroke: st.win ? 'rgba(255,215,106,.5)' : 'rgba(255,255,255,.2)', shadowBlur: 30 });
+    R.text(ctx, `第 ${st.day} 天 · 收摊结算`, W / 2, py + 46, { size: 30, color: '#fff', align: 'center', stroke: 'rgba(0,0,0,.4)' });
+    R.text(ctx, venueDef().name, W / 2, py + 78, { size: 15, color: 'rgba(255,255,255,.5)', align: 'center', weight: 600 });
+    const rows = [ ['当日营业收入', `+${nf(countUp(st.dayCoins, 0.1, 0.35))}`, CL.gold],
+      ['新增粉丝', `+${nf(countUp(st.dayFans, 0.18, 0.35))}`, CL.hero],
+      ['员工工资', st.dayWage ? `-${nf(countUp(st.dayWage, 0.26, 0.3))}` : '0', CL.danger],
+      ['场地租金', st.dayRent ? `-${nf(countUp(st.dayRent, 0.32, 0.3))}` : '0', CL.danger], ];
+    rows.forEach(([label, val, color], i) => { const y = py + 128 + i * 44;
+      R.text(ctx, label, px + 46, y, { size: 18, color: 'rgba(255,255,255,.62)', weight: 600 });
+      R.text(ctx, val, px + pw - 46, y, { size: 21, color, align: 'right', weight: 900 });
+      ctx.strokeStyle = 'rgba(255,255,255,.07)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px + 40, y + 20); ctx.lineTo(px + pw - 40, y + 20); ctx.stroke(); });
+    const net = st.dayNet;
+    R.text(ctx, net >= 0 ? '当日净利' : '当日亏损', px + 46, py + 320, { size: 18, color: 'rgba(255,255,255,.62)', weight: 600 });
+    R.text(ctx, `${net >= 0 ? '+' : ''}${nf(countUp(Math.abs(net), 0.36, 0.35))}`, px + pw - 46, py + 320, {
+      size: 34, color: net >= 0 ? CL.ok : CL.danger, align: 'right', weight: 900, });
+    R.text(ctx, `累计营业额 ${fmt(st.rev)} / ${fmt(TARGET)}`, W / 2, py + 368, { size: 15, color: CL.accent2, align: 'center', weight: 800 });
+    R.bar(ctx, px + 46, py + 380, pw - 92, 12, clamp(st.rev / Math.max(1, TARGET), 0, 1), { c1: '#b1523a', c2: '#ffb27a', stroke: 'rgba(255,255,255,.16)' });
+    R.text(ctx, `粉丝 ${fmt(st.fans)} / ${fmt(FAN_TARGET)}`, W / 2, py + 410, { size: 15, color: CL.hero, align: 'center', weight: 800 });
+    R.bar(ctx, px + 46, py + 422, pw - 92, 12, clamp(st.fans / Math.max(1, FAN_TARGET), 0, 1), { c1: '#3f7ea8', c2: '#9fe8ff', stroke: 'rgba(255,255,255,.16)' });
+    R.text(ctx, `现金结余 ${fmt(st.coins)} ${CUR}`, W / 2, py + 452, { size: 13, color: 'rgba(255,255,255,.7)', align: 'center', weight: 700 });
+    if (st.reason) R.text(ctx, st.reason, W / 2, py + 476, { size: 16, color: CL.danger, align: 'center', weight: 800 });
+    // 下一天
+    const bReady = st.settleT >= SETTLE_MIN && rule.status === 'playing';
+    const last = st.day >= days;
+    const br = { x: W / 2 - 150, y: py + ph - 92, w: 300, h: 66 };
+    R.button(ctx, br, last ? '看结果' : '下一天 →', { disabled: !bReady, size: 24 });
+    if (!bReady) R.text(ctx, '…', W / 2, py + ph - 40, { size: 14, color: 'rgba(255,255,255,.5)', align: 'center' });
+    ctx.restore(); }
+  function drawEvent(ctx) { const k = clamp(st.animT > 0 ? 1 : 0, 0, 1);
+    ctx.fillStyle = `rgba(6,8,16,${0.7 * k})`; ctx.fillRect(0, 70, W, H - 70);
+    const pw = 620, ph = 316, px = (W - pw) / 2, py = 452;
+    R.panel(ctx, px, py, pw, ph, { r: 26, fill: 'rgba(24,20,40,.97)', stroke: 'rgba(199,155,255,.45)', shadow: false });
+    R.text(ctx, '突发事件', W / 2, py + 34, { size: 15, color: 'rgba(199,155,255,.9)', align: 'center', weight: 700 });
+    R.text(ctx, st.evt.title, W / 2, py + 70, { size: 32, color: '#fff', align: 'center', stroke: 'rgba(0,0,0,.4)' });
+    R.text(ctx, st.evt.text, W / 2, py + 108, { size: 16, color: 'rgba(255,255,255,.7)', align: 'center', weight: 600 });
+    for (let i = 0; i < st.evt.opts.length; i++) { const op = st.evt.opts[i];
+      const b = ui.event[i];
+      const desc = [];
+      if (op.coins) desc.push(`${op.coins > 0 ? '+' : ''}${fmt(money(op.coins))} ${CUR}`);
+      if (op.fans) desc.push(`${op.fans > 0 ? '+' : ''}${Math.round(op.fans * econ)} 粉丝`);
+      if (op.ap) desc.push(`+${op.ap} 行动点`);
+      if (op.incomeMul) desc.push(`今日收入 ×${op.incomeMul}`);
+      if (op.fansMul) desc.push(`今日粉丝 ×${op.fansMul}`);
+      if (op.wageFree) desc.push('免当日工资');
+      R.panel(ctx, b.x, b.y, b.w, b.h, { r: 16, fill: 'rgba(48,40,70,.94)', stroke: 'rgba(255,255,255,.2)', shadowBlur: 8 });
+      R.text(ctx, op.label, b.x + b.w / 2, b.y + 30, { size: 20, color: '#fff', align: 'center', weight: 900 });
+      R.text(ctx, desc.join(' · '), b.x + b.w / 2, b.y + 62, { size: 13, color: op.coins < 0 ? '#ff9c9c' : CL.accent, align: 'center', weight: 700 });
+    } }
+  function drawHUD(ctx, t) { drawTop(ctx, t);
+    if (st.phase === 'settle') { drawSettle(ctx); return; }
+    if (st.phase === 'event') { drawEvent(ctx); return; }
+    drawInfo(ctx, t);
+    drawStaff(ctx, t);
+    drawHire(ctx, t);
+    drawVenueBtn(ctx, t);
+    drawShows(ctx, t);
+    drawCTA(ctx, t); }
+
+  /* ------------------------------ 输入 ------------------------------ */
+  function pointer(kind, x, y, key) { if (kind === 'key') {
+      if (key === ' ' || key === 'Enter') { if (st.phase === 'plan') startBiz();
+        else if (st.phase === 'settle' && st.settleT >= SETTLE_MIN) nextDay();
+        return; }
+      if (key === 'u' || key === 'U') { upgradeVenue(); return; }
+      if (key >= '1' && key <= '4') { hire(D.roles[Number(key) - 1].id); return; }
+      return; }
+    if (kind !== 'down') return;
+    if (rule.status !== 'playing') return;
+    if (st.phase === 'event') {
+      for (let i = 0; i < ui.event.length; i++) if (hit(ui.event[i], x, y)) { pickEventOption(i); return; }
+      return; }
+    if (st.phase === 'settle') { if (hit(ui.settle, x, y) && st.settleT >= SETTLE_MIN) nextDay();
+      return; }
+    if (st.phase !== 'plan') return;
+    for (const c of ui.hire) if (hit(c, x, y)) { hire(c.role); return; }
+    for (let i = 0; i < ui.staff.length; i++) if (hit(ui.staff[i], x, y) && st.staff[i]) { upgradeStaff(st.staff[i].uid); return; }
+    if (hit(ui.venue, x, y)) { upgradeVenue(); return; }
+    for (const b of ui.shows) if (hit(b, x, y)) { useShow(b.id); return; }
+    if (hit(ui.cta, x, y)) { startBiz(); return; } }
+  const hit = (r, x, y) => !!r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+
+  /* ------------------------------ 机器人（无头仿真 / 试玩） ------------------------------ */
+  /* 机器人：固定建设顺序（填工位 → 全员 Lv2 → 扩场地 → 全员 Lv5），
+   * 只受现金/行动点限制，路径不随机，保证无头仿真稳定可复现。 */
+  function botNeedFans(r) { if (!FAN_TARGET) return false;
+    const left = Math.max(0, days - st.day + 1);
+    const projected = st.fans + r.fanRate * BIZ * left;
+    return projected < FAN_TARGET * 1.12; }
+  function botAct() { if (st.phase !== 'plan') return false;
+    const v = venueDef();
+    const r = rate();
+    const reserve = (r.wage + r.rent) * 1.05 + 6 * econ;   // 只留一天成本 + 小额缓冲
+    const safe = st.coins - reserve;
+    const needFans = botNeedFans(r);
+
+    // 1) 有工位就招人（粉丝紧张时优先主播，否则优先当前买得起、单产最高的）
+    if (st.staff.length < v.cap) { const roster = D.roles.slice().sort((a, b) => b.rate - a.rate);
+      let pick = null;
+      for (const def of roster) { if (hireCost(def) > safe) continue;
+        if (needFans && def.fans < 0.5 && pick) continue;
+        pick = def;
+        if (needFans && def.fans >= 0.5) break; }
+      if (pick) { hire(pick.id); return true; } }
+    // 2) 全员先升到 Lv2（性价比最高的阶段），再考虑扩场地
+    if (st.staff.length > 0) { const lv1 = st.staff.filter((e) => e.level === 1).sort((a, b) => upCost(a) - upCost(b));
+      if (lv1.length) { if (upCost(lv1[0]) <= safe) { upgradeStaff(lv1[0].uid); return true; } return false; } }
+    // 3) 扩场地（加容量/单价）——工位满时优先
+    const next = D.venues[st.venue + 1];
+    if (next && st.staff.length >= v.cap && venueCost() <= safe) { upgradeVenue(); return true; }
+    // 4) 全员往上练级
+    const low = st.staff.filter((e) => e.level < 5).sort((a, b) => a.level - b.level || upCost(a) - upCost(b));
+    if (low.length && upCost(low[0]) <= safe) { upgradeStaff(low[0].uid); return true; }
+    // 5) 场地/工位都卡住了，扩场地；否则存钱
+    if (next && st.staff.length >= v.cap && venueCost() <= safe) { upgradeVenue(); return true; }
+    if (next && venueCost() <= safe && st.coins > venueCost() * 1.6) { upgradeVenue(); return true; }
+
+    // 6) 节目：闲钱换当日收益
+    if (!st.today.showId) { const live = D.shows.find((s) => s.id === 'live');
+      const boom = D.shows.find((s) => s.id === 'boom');
+      const party = D.shows.find((s) => s.id === 'party');
+      const gain = r.inc * BIZ;
+      const canPay = (c) => st.coins > reserve + c * 1.6;
+      if (boom && canPay(money(boom.cost)) && gain * (boom.incomeMul - 1) > money(boom.cost) * 1.25) { useShow('boom'); return true; }
+      if (party && canPay(money(party.cost)) && gain * (party.incomeMul - 1) + r.wage > money(party.cost) * 1.15) { useShow('party'); return true; }
+      if (needFans && live && canPay(money(live.cost))) { useShow('live'); return true; } }
+    return false; }
+  function botEvent() { if (st.phase !== 'event' || !st.evt) return;
+    let bestI = 0, bestS = -1e9;
+    const behind = FAN_TARGET > 0 && st.fans < FAN_TARGET * (st.day / days) * 1.05;
+    st.evt.opts.forEach((op, i) => { let sc = 0;
+      sc += (op.coins || 0);
+      sc += (op.fans || 0) * (behind ? 1.6 : 0.7);
+      sc += (op.ap || 0) * 46;
+      sc += (op.incomeMul || 1) > 1 ? (op.incomeMul - 1) * 120 : 0;
+      sc += (op.fansMul || 1) > 1 ? (op.fansMul - 1) * 60 : 0;
+      sc += op.wageFree ? 30 : 0;
+      if (sc > bestS) { bestS = sc; bestI = i; } });
+    pickEventOption(bestI); }
+  function bot(dt) { if (rule.status !== 'playing') return;
+    botT += dt;
+    if (botT < 0.04) return;
+    botT = 0;
+    if (st.phase === 'event') { botEvent(); return; }
+    if (st.phase === 'settle') { if (st.settleT > SETTLE_MIN + 0.05) nextDay(); return; }
+    if (st.phase !== 'plan') return;
+    for (let i = 0; i < 8; i++) { if (!botAct()) break; }
+    if (st.phase === 'plan') startBiz(); }
+
+  /* ------------------------------ 初始化 ------------------------------ */
+  function layout() {
+    // 员工工位：3 × 2
+    const chipW = Math.floor((STAFFP.w - 16 - 20) / 3);
+    const chipH = 60;
+    for (let i = 0; i < MAX_STAFF; i++) { const col = i % 3, row = Math.floor(i / 3);
+      ui.staff.push({ x: STAFFP.x + 8 + col * (chipW + 10), y: STAFFP.y + 36 + row * (chipH + 8), w: chipW, h: chipH }); }
+    // 招募卡：1 × 4
+    const cardW = Math.floor((HIREP.w - 16 - 24) / 4);
+    for (let i = 0; i < D.roles.length; i++) {
+      ui.hire.push({ role: D.roles[i].id, x: HIREP.x + 8 + i * (cardW + 8), y: HIREP.y + 30, w: cardW, h: HIREP.h - 38 }); }
+    // 节目：3 个
+    const sw = Math.floor((SHOWP.w - 16 - 16) / 3);
+    for (let i = 0; i < D.shows.length; i++) {
+      ui.shows.push({ id: D.shows[i].id, x: SHOWP.x + 8 + i * (sw + 8), y: SHOWP.y + 4, w: sw, h: SHOWP.h - 8 }); }
+    ui.venue = { x: VEN.x, y: VEN.y, w: VEN.w, h: VEN.h };
+    ui.cta = { x: CTA.x, y: CTA.y, w: CTA.w, h: CTA.h };
+    ui.settle = { x: W / 2 - 150, y: 318 + 588 - 92, w: 300, h: 66 };
+    const ew = 260;
+    ui.event = [ { x: W / 2 - ew - 14, y: 452 + 140, w: ew, h: 132 },
+      { x: W / 2 + 14, y: 452 + 140, w: ew, h: 132 }, ];
+  }
+
+  const rule = { status: 'playing',
+    ui, init() {
+      layout();
+      st.phase = 'plan';
+      resetToday();
+      st.coinsShown = st.coins; st.fansShown = st.fans;
+      if (st.evt) st.phase = 'event'; },
+    update, drawWorld, drawHUD, pointer, bot, result() {
+      return { stars: st.win ? st.stars : 0,
+        score: Math.round(st.rev), coins: st.win ? 16 + level.id * 7 : 0,
+        kills: Math.floor(st.fans), time: st.time,
+      }; },
+    debug() { return {
+        status: rule.status, phase: st.phase, day: st.day, ap: st.ap,
+        coins: Math.round(st.coins * 100) / 100, rev: Math.round(st.rev * 100) / 100, fans: Math.round(st.fans * 100) / 100,
+        target: TARGET, fanTarget: FAN_TARGET, staff: st.staff.length, venue: st.venue + 1,
+        inc: Math.round(rate().inc * 100) / 100, time: Math.round(st.time * 10) / 10, kills: Math.floor(st.fans),
+        win: st.win, stars: st.stars, reason: st.reason, finalRatio: Math.round(st.finalRatio * 1000) / 1000,
+        spend: st.spend, hires: st.hires, upgs: st.upgs, showUses: st.showUses, };
+    }, };
+  return rule; }
+
+return { createRule };
+})();
+__m["js/main.js"] = (function(){
+/* 入口：创建 App，绑定启动遮罩；window.__game 供调试与自动化测试使用 */
+const { App } = __m["js/app.js"];
+
+const { CONTENT } = __m["js/content.js"];
+
+const { createRule } = __m["js/rules/idle.js"];
+
+
+const canvas = document.getElementById('game');
+const app = new App(canvas, CONTENT, createRule);
+app.mount();
+window.__game = app;
+
+const boot = document.getElementById('boot');
+function hideBoot() {
+  if (boot && boot.parentNode) {
+    boot.classList.add('hide');
+    setTimeout(() => { try { boot.remove(); } catch (e) {} }, 420);
+  }
+  app.begin();
+}
+if (boot) boot.addEventListener('pointerdown', hideBoot, { once: true });
+window.addEventListener('pointerdown', () => app.begin(), { once: true });
+
+return {  };
+})();
+})();
+
+</script>
+</body>
+</html>

@@ -1,0 +1,3225 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#041a22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>深海打捞</title>
+<link rel="icon" href="data:,">
+<style>
+/* 基础重置 + 全屏画布 + 启动遮罩（所有游戏共用） */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%; overflow: hidden; background: #04202b;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none; touch-action: none;
+}
+#app { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+canvas#game { display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
+#boot {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(120% 120% at 50% 20%, #0c5a6e 0%, #062a3a 70%);
+  z-index: 20; transition: opacity .35s ease; cursor: pointer;
+}
+#boot.hide { opacity: 0; pointer-events: none; }
+.boot-mask { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(255,255,255,.02) 0 1px, transparent 1px 4px); }
+.boot-card { position: relative; text-align: center; padding: 28px 34px; }
+.boot-title {
+  font-size: clamp(28px, 6vw, 54px); font-weight: 900; letter-spacing: .12em;
+  color: #fff; text-shadow: 0 4px 0 rgba(0,0,0,.25), 0 0 28px rgba(92,225,230,0.55);
+}
+.boot-sub { margin-top: 10px; font-size: clamp(12px, 1.6vw, 16px); letter-spacing: .3em; color: rgba(255,255,255,.72); }
+.boot-hint {
+  margin-top: 34px; font-size: clamp(13px, 1.6vw, 16px); color: #fff; opacity: .9;
+  padding: 10px 20px; border: 1px solid rgba(255,255,255,.35); border-radius: 999px;
+  display: inline-block; animation: bootPulse 1.6s ease-in-out infinite;
+}
+@keyframes bootPulse { 0%,100% { opacity: .55; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="game" aria-label="深海打捞"></canvas>
+</div>
+<div id="boot">
+  <div class="boot-mask"></div>
+  <div class="boot-card">
+    <div class="boot-title">深海打捞</div>
+    <div class="boot-sub">海底打捞 · 深海机师的冒险</div>
+    <div class="boot-hint" id="boot-hint">轻触屏幕开始</div>
+  </div>
+</div>
+<noscript>需要开启 JavaScript 才能游玩。</noscript>
+<script>
+/* 深海打捞 · 单文件构建（离线可玩） */
+(function(){
+"use strict";
+const __m = Object.create(null);
+__m["js/core.js"] = (function(){
+/* =========================================================================
+ * core.js —— 纯逻辑层（无 DOM，可在 Node 里跑无头仿真）
+ * 数学工具 / 可复现随机 / 版本化存档
+ * ========================================================================= */
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const invLerp = (a, b, v) => (b === a ? 0 : (v - a) / (b - a));
+const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
+const smoothstep = (t) => t * t * (3 - 2 * t);
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+const easeOutBack = (t) => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
+const TAU = Math.PI * 2;
+const dist2 = (ax, ay, bx, by) => { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; };
+const dist = (ax, ay, bx, by) => Math.sqrt(dist2(ax, ay, bx, by));
+const pointInRect = (x, y, r) => x >= r.x && y >= r.y && x <= r.x + r.w && y <= r.y + r.h;
+const rectsOverlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+const fmt = (n) => {
+  n = Math.floor(n);
+  if (n >= 1e8) return (n / 1e8).toFixed(2).replace(/\.?0+$/, '') + '亿';
+  if (n >= 1e4) return (n / 1e4).toFixed(1).replace(/\.0$/, '') + '万';
+  return String(n);
+};
+const fmtTime = (s) => {
+  s = Math.max(0, Math.floor(s));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+};
+const pick = (rng, arr) => arr[Math.min(arr.length - 1, (rng() * arr.length) | 0)];
+const shuffle = (rng, arr) => {
+  for (let i = arr.length - 1; i > 0; i--) { const j = (rng() * (i + 1)) | 0; const t = arr[i]; arr[i] = arr[j]; arr[j] = t; }
+  return arr;
+};
+
+/* ---------- 可复现随机数（mulberry32） ---------- */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashString(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+class RNG {
+  constructor(seed) { this.seed = typeof seed === 'string' ? hashString(seed) : (seed >>> 0); this.f = mulberry32(this.seed); }
+  next() { return this.f(); }
+  range(a, b) { return a + (b - a) * this.f(); }
+  int(a, b) { return Math.floor(a + (b - a + 1) * this.f()); }
+  pick(arr) { return pick(this.f, arr); }
+  shuffle(arr) { return shuffle(this.f, arr); }
+  chance(p) { return this.f() < p; }
+}
+
+/* ---------- 版本化存档（localStorage 可缺省） ---------- */
+const LS = (() => { try { return typeof window === 'undefined' ? null : (window.localStorage || null); } catch (e) { return null; } })();
+
+function makeSave(slug, customDefault = {}) {
+  const KEY = 'gs_' + slug + '_v1';
+  const DEFAULT = {
+    v: 1,
+    unlocked: 1,
+    stars: {},
+    best: {},
+    coins: 0,
+    totalClears: 0,
+    totalKills: 0,
+    playSec: 0,
+    firstRun: true,
+    settings: { music: true, sfx: true, haptic: true, lowfx: false },
+    flags: {},
+    ...customDefault,
+  };
+  const deepMerge = (base, patch) => {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return patch === undefined ? base : patch;
+    const out = Array.isArray(base) ? base.slice() : { ...base };
+    for (const k of Object.keys(patch)) {
+      const b = base ? base[k] : undefined;
+      const p = patch[k];
+      out[k] = (p && typeof p === 'object' && !Array.isArray(p) && b && typeof b === 'object' && !Array.isArray(b)) ? deepMerge(b, p) : p;
+    }
+    return out;
+  };
+  class Save {
+    constructor() { this.data = this.load(); }
+    load() {
+      try {
+        const raw = LS && LS.getItem(KEY);
+        return raw ? deepMerge(JSON.parse(JSON.stringify(DEFAULT)), JSON.parse(raw)) : JSON.parse(JSON.stringify(DEFAULT));
+      } catch (e) { return JSON.parse(JSON.stringify(DEFAULT)); }
+    }
+    flush() { try { LS && LS.setItem(KEY, JSON.stringify(this.data)); } catch (e) { /* 配额不足时静默 */ } }
+    reset() { this.data = JSON.parse(JSON.stringify(DEFAULT)); this.flush(); }
+    get settings() { return this.data.settings; }
+    setSetting(k, v) { this.data.settings[k] = v; this.flush(); }
+    starOf(id) { return this.data.stars[id] || 0; }
+    isUnlocked(id) { return id <= this.data.unlocked; }
+    complete(id, stars, score) {
+      const d = this.data;
+      d.stars[id] = Math.max(d.stars[id] || 0, stars);
+      if (!d.best[id] || score > d.best[id]) d.best[id] = score;
+      if (id + 1 > d.unlocked) d.unlocked = id + 1;
+      d.totalClears++;
+      this.flush();
+    }
+    totalStars() { return Object.keys(this.data.stars).reduce((s, k) => s + this.data.stars[k], 0); }
+    addCoins(n) { this.data.coins = Math.max(0, (this.data.coins || 0) + n); this.flush(); }
+    flag(k, v) { this.data.flags[k] = v; this.flush(); }
+  }
+  return new Save();
+}
+
+/* ---------- 无头仿真使用的空服务 ---------- */
+const silentAudio = { sfx() {}, setMuted() {}, music() {}, ok: false };
+const silentFx = { burst() {}, text() {}, shake() {}, flash() {}, ring() {}, beam() {}, ok: false };
+
+return { clamp, lerp, invLerp, damp, smoothstep, easeOutCubic, easeOutBack, TAU, dist2, dist, pointInRect, rectsOverlap, fmt, fmtTime, pick, shuffle, mulberry32, hashString, RNG, makeSave, silentAudio, silentFx };
+})();
+__m["js/platform.js"] = (function(){
+/* =========================================================================
+ * platform.js —— 浏览器平台层：自适应布局 / WebAudio 合成音乐音效 /
+ *                 粒子与屏震 / 指针输入
+ * ========================================================================= */
+const { clamp, RNG } = __m["js/core.js"];
+
+
+/* ------------------------------ 布局 ------------------------------ */
+class Layout {
+  constructor(canvas, W, H) {
+    this.canvas = canvas;
+    this.W = W; this.H = H;
+    this.scale = 1; this.ox = 0; this.oy = 0;
+    this.resize();
+  }
+  resize() {
+    // 限制总像素（约 240 万），保证竖屏高分设备也能 60fps
+    const baseDpr = Math.min(2, window.devicePixelRatio || 1);
+    const dpr = Math.max(1, Math.min(baseDpr, Math.sqrt(2400000 / (this.W * this.H))));
+    const vw = window.innerWidth, vh = window.innerHeight;
+    this.scale = Math.min(vw / this.W, vh / this.H);
+    const cw = Math.round(this.W * this.scale), ch = Math.round(this.H * this.scale);
+    this.ox = Math.round((vw - cw) / 2); this.oy = Math.round((vh - ch) / 2);
+    const c = this.canvas;
+    c.width = Math.round(this.W * dpr); c.height = Math.round(this.H * dpr);
+    c.style.width = cw + 'px'; c.style.height = ch + 'px';
+    // #app 已是 flex 居中：不要再加 margin，否则窗口比例与设计比例不同时画布会被二次偏移
+    c.style.marginLeft = '0px'; c.style.marginTop = '0px';
+    this.dpr = dpr;
+  }
+  applyTransform(ctx) { ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); }
+  toDesign(clientX, clientY) {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: ((clientX - r.left) / r.width) * this.W, y: ((clientY - r.top) / r.height) * this.H };
+  }
+}
+
+/* ------------------------------ 音频 ------------------------------ */
+const NOTE = (semi) => 440 * Math.pow(2, semi / 12); // semi 相对 A4
+
+class Sound {
+  constructor(theme) {
+    this.theme = theme || {};
+    this.ctx = null; this.master = null; this.musicGain = null; this.sfxGain = null;
+    this.muted = { music: false, sfx: false };
+    this.started = false; this.timer = null; this.step = 0; this.nextTime = 0; this.rng = new RNG(7);
+    this.mood = this.theme.music || { root: -9, scale: [0, 2, 4, 7, 9], tempo: 76 };
+  }
+  ensure() {
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); return true; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    try {
+      this.ctx = new AC();
+      this.master = this.ctx.createGain(); this.master.gain.value = 0.85; this.master.connect(this.ctx.destination);
+      this.musicGain = this.ctx.createGain(); this.musicGain.gain.value = 0.26; this.musicGain.connect(this.master);
+      this.sfxGain = this.ctx.createGain(); this.sfxGain.gain.value = 0.7; this.sfxGain.connect(this.master);
+      this.startMusic();
+      return true;
+    } catch (e) { this.ctx = null; return false; }
+  }
+  setMuted(kind, v) {
+    this.muted[kind] = v;
+    if (!this.ctx) return;
+    const g = kind === 'music' ? this.musicGain : this.sfxGain;
+    g.gain.setTargetAtTime(v ? 0 : (kind === 'music' ? 0.26 : 0.7), this.ctx.currentTime, 0.08);
+  }
+  /* 单音：type/freq/dur/gain/slide/attack */
+  tone({ type = 'sine', freq = 440, dur = 0.15, gain = 0.25, slide = 0, attack = 0.005, dest = null, when = 0 }) {
+    if (!this.ctx || this.muted.sfx) return;
+    const t0 = this.ctx.currentTime + when;
+    const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq * slide), t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t0 + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(dest || this.sfxGain); o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  noise({ dur = 0.18, gain = 0.2, freq = 1200, q = 1, type = 'lowpass', when = 0 }) {
+    if (!this.ctx || this.muted.sfx) return;
+    const t0 = this.ctx.currentTime + when;
+    const len = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const f = this.ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = this.ctx.createGain(); g.gain.value = gain;
+    src.connect(f); f.connect(g); g.connect(this.sfxGain); src.start(t0);
+  }
+  sfx(name) {
+    if (!this.ctx) return;
+    switch (name) {
+      case 'click': this.tone({ type: 'triangle', freq: 660, dur: 0.06, gain: 0.16, slide: 1.2 }); break;
+      case 'coin': this.tone({ type: 'square', freq: 880, dur: 0.07, gain: 0.1 }); this.tone({ type: 'square', freq: 1320, dur: 0.1, gain: 0.07, when: 0.05 }); break;
+      case 'hit': this.noise({ dur: 0.08, gain: 0.12, freq: 900, type: 'bandpass', q: 1.4 }); break;
+      case 'punch': this.tone({ type: 'sine', freq: 160, dur: 0.12, gain: 0.3, slide: 0.5 }); break;
+      case 'arrow': this.tone({ type: 'sawtooth', freq: 900, dur: 0.08, gain: 0.05, slide: 0.4 }); break;
+      case 'explode': this.noise({ dur: 0.35, gain: 0.32, freq: 320, type: 'lowpass' }); this.tone({ type: 'sine', freq: 90, dur: 0.3, gain: 0.28, slide: 0.4 }); break;
+      case 'build': this.tone({ type: 'triangle', freq: 330, dur: 0.12, gain: 0.18 }); this.tone({ type: 'triangle', freq: 494, dur: 0.16, gain: 0.15, when: 0.07 }); break;
+      case 'upgrade': [523, 659, 784, 1046].forEach((f, i) => this.tone({ type: 'triangle', freq: f, dur: 0.14, gain: 0.12, when: i * 0.06 })); break;
+      case 'spell': this.tone({ type: 'sine', freq: 300, dur: 0.4, gain: 0.2, slide: 2.4 }); this.noise({ dur: 0.3, gain: 0.1, freq: 2000, type: 'highpass' }); break;
+      case 'freeze': this.tone({ type: 'sine', freq: 1400, dur: 0.3, gain: 0.1, slide: 0.6 }); break;
+      case 'merge': this.tone({ type: 'triangle', freq: 440, dur: 0.1, gain: 0.16, slide: 1.6 }); break;
+      case 'win': [523, 659, 784, 1046, 1318].forEach((f, i) => this.tone({ type: 'triangle', freq: f, dur: 0.22, gain: 0.14, when: i * 0.1 })); break;
+      case 'lose': [392, 330, 262, 196].forEach((f, i) => this.tone({ type: 'sawtooth', freq: f, dur: 0.26, gain: 0.09, when: i * 0.13 })); break;
+      case 'warn': this.tone({ type: 'square', freq: 220, dur: 0.18, gain: 0.1, slide: 0.8 }); break;
+      case 'pickup': this.tone({ type: 'sine', freq: 1046, dur: 0.06, gain: 0.1 }); this.tone({ type: 'sine', freq: 1568, dur: 0.08, gain: 0.07, when: 0.03 }); break;
+      default: this.tone({ type: 'sine', freq: 520, dur: 0.06, gain: 0.1 });
+    }
+  }
+  /* 极简程序化配乐：和弦 pad + 五声音阶琶音，按 mood 换调式 */
+  startMusic() {
+    if (!this.ctx || this.timer) return;
+    const m = this.mood;
+    const beat = 60 / (m.tempo || 76);
+    this.nextTime = this.ctx.currentTime + 0.1; this.step = 0;
+    const tick = () => {
+      if (!this.ctx) return;
+      while (this.nextTime < this.ctx.currentTime + 0.6) {
+        if (!this.muted.music) this.playStep(this.step, this.nextTime - this.ctx.currentTime, beat, m);
+        this.nextTime += beat; this.step++;
+      }
+      this.timer = setTimeout(tick, 180);
+    };
+    tick();
+  }
+  playStep(step, when, beat, m) {
+    const scale = m.scale || [0, 2, 4, 7, 9];
+    const root = m.root ?? -9;
+    const bar = Math.floor(step / 8) % 4;
+    const chords = [[0, 4, 7], [-3, 2, 5], [-5, 0, 4], [-1, 2, 7]];
+    const ch = chords[bar];
+    if (step % 8 === 0) {
+      for (const s of ch) this.pad(NOTE(root + s - 12), beat * 4, 0.05, when);
+    }
+    if (step % 2 === 0) {
+      const deg = scale[Math.floor(this.rng.next() * scale.length)];
+      this.arp(NOTE(root + deg + 12), beat * 0.9, 0.035, when);
+    }
+    if (step % 8 === 4) this.arp(NOTE(root + ch[2]), beat * 1.4, 0.03, when);
+  }
+  pad(freq, dur, gain, when) {
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime + when;
+    for (let i = 0; i < 2; i++) {
+      const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+      o.type = i ? 'sine' : 'triangle'; o.frequency.value = freq * (i ? 1.005 : 1);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(gain, t0 + dur * 0.3);
+      g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(this.musicGain); o.start(t0); o.stop(t0 + dur + 0.05);
+    }
+  }
+  arp(freq, dur, gain, when) {
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime + when;
+    const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(this.musicGain); o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+}
+
+/* ------------------------------ 粒子 / 表演 ------------------------------ */
+class Fx {
+  constructor() { this.parts = []; this.texts = []; this.rings = []; this.shakeAmt = 0; this.flashAmt = 0; this.quality = 1; this.rng = new RNG(99); }
+  burst(x, y, n = 8, opts = {}) {
+    const color = opts.color || '#fff';
+    const speed = opts.speed || 180;
+    const count = Math.round(n * this.quality);
+    for (let i = 0; i < count; i++) {
+      const a = opts.angle != null ? opts.angle + (this.rng.next() - 0.5) * (opts.spread || 1.6) : this.rng.next() * Math.PI * 2;
+      const v = speed * (0.4 + this.rng.next() * 0.9);
+      this.parts.push({
+        x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - (opts.up || 0),
+        life: 0, max: (opts.life || 0.5) * (0.6 + this.rng.next() * 0.7),
+        size: (opts.size || 3) * (0.6 + this.rng.next() * 0.8),
+        color, grav: opts.grav != null ? opts.grav : 420, shape: opts.shape || 'dot', drag: opts.drag || 0.99,
+      });
+    }
+  }
+  text(x, y, str, color = '#fff', size = 22, opts = {}) {
+    this.texts.push({ x, y, str: String(str), color, size, life: 0, max: opts.max || 0.9, vy: opts.vy != null ? opts.vy : -60, vx: opts.vx || 0 });
+    if (this.texts.length > 40) this.texts.shift();
+  }
+  ring(x, y, color = '#fff', r = 10, opts = {}) { this.rings.push({ x, y, color, r, r0: r, life: 0, max: opts.max || 0.45, grow: opts.grow || 120 }); }
+  beam() { /* 预留给技能连接线 */ }
+  shake(n) { this.shakeAmt = Math.min(26, this.shakeAmt + n); }
+  flash(a) { this.flashAmt = Math.max(this.flashAmt, a); }
+  update(dt) {
+    for (let i = this.parts.length - 1; i >= 0; i--) {
+      const p = this.parts[i]; p.life += dt;
+      if (p.life >= p.max) { this.parts.splice(i, 1); continue; }
+      p.vx *= p.drag; p.vy = p.vy * p.drag + p.grav * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+    }
+    for (let i = this.texts.length - 1; i >= 0; i--) {
+      const t = this.texts[i]; t.life += dt;
+      if (t.life >= t.max) { this.texts.splice(i, 1); continue; }
+      t.x += t.vx * dt; t.y += t.vy * dt; t.vy += 130 * dt;
+    }
+    for (let i = this.rings.length - 1; i >= 0; i--) {
+      const r = this.rings[i]; r.life += dt;
+      if (r.life >= r.max) { this.rings.splice(i, 1); continue; }
+      r.r += r.grow * dt;
+    }
+    this.shakeAmt *= Math.exp(-7 * dt); if (this.shakeAmt < 0.2) this.shakeAmt = 0;
+    this.flashAmt *= Math.exp(-6 * dt); if (this.flashAmt < 0.01) this.flashAmt = 0;
+  }
+  draw(ctx) {
+    for (const p of this.parts) {
+      const k = 1 - p.life / p.max;
+      ctx.globalAlpha = Math.max(0, k);
+      ctx.fillStyle = p.color;
+      if (p.shape === 'spark') {
+        ctx.fillRect(p.x - p.size * 0.5, p.y - p.size * 0.5, p.size, p.size * 2.2);
+      } else if (p.shape === 'ring') {
+        ctx.strokeStyle = p.color; ctx.lineWidth = Math.max(1, p.size * 0.5);
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1.4 - k), 0, Math.PI * 2); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (0.4 + k * 0.8), 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+    for (const r of this.rings) {
+      const k = 1 - r.life / r.max;
+      ctx.globalAlpha = Math.max(0, k) * 0.8; ctx.strokeStyle = r.color; ctx.lineWidth = 3 * k + 1;
+      ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    for (const t of this.texts) {
+      const k = t.life / t.max;
+      ctx.globalAlpha = Math.max(0, 1 - k * k);
+      ctx.font = `900 ${t.size}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      ctx.textAlign = 'center'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.55)';
+      ctx.strokeText(t.str, t.x, t.y); ctx.fillStyle = t.color; ctx.fillText(t.str, t.x, t.y);
+    }
+    ctx.globalAlpha = 1;
+  }
+  flashDraw(ctx, W, H) {
+    if (this.flashAmt > 0.01) { ctx.fillStyle = `rgba(255,255,255,${this.flashAmt * 0.5})`; ctx.fillRect(0, 0, W, H); }
+  }
+}
+
+/* ------------------------------ 输入 ------------------------------ */
+class Input {
+  constructor(canvas, layout, handlers) {
+    this.canvas = canvas; this.layout = layout; this.h = handlers;
+    this.active = new Map();
+    this.last = { x: 0, y: 0 };
+    const down = (e) => {
+      const p = this.pt(e); this.active.set(e.pointerId ?? 0, p); this.last = p;
+      this.h.onDown?.(p.x, p.y, e);
+      if (e.pointerId != null && canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+      e.preventDefault();
+    };
+    const move = (e) => {
+      const p = this.pt(e); this.last = p;
+      this.h.onMove?.(p.x, p.y, e);
+      e.preventDefault();
+    };
+    const up = (e) => {
+      const p = this.pt(e); this.h.onUp?.(p.x, p.y, e);
+      this.active.delete(e.pointerId ?? 0);
+      e.preventDefault();
+    };
+    canvas.addEventListener('pointerdown', down, { passive: false });
+    canvas.addEventListener('pointermove', move, { passive: false });
+    canvas.addEventListener('pointerup', up, { passive: false });
+    canvas.addEventListener('pointercancel', up, { passive: false });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('keydown', (e) => {
+      if (this.h.onKey) this.h.onKey(e.key, e);
+    });
+    window.addEventListener('resize', () => layout.resize());
+  }
+  pt(e) {
+    const t = e.touches ? e.touches[0] : e;
+    return this.layout.toDesign(t.clientX, t.clientY);
+  }
+}
+
+return { Layout, Sound, Fx, Input };
+})();
+__m["js/render.js"] = (function(){
+/* =========================================================================
+ * render.js —— 通用 Canvas2D 绘制工具：圆角面板 / 文字 / 按钮 / 进度条 /
+ *               星星 / 渐变背景 / 图标
+ * ========================================================================= */
+const { clamp, easeOutCubic } = __m["js/core.js"];
+
+
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+function rect(ctx, x, y, w, h, fill) {
+  ctx.fillStyle = fill; ctx.fillRect(x, y, w, h);
+}
+function panel(ctx, x, y, w, h, o = {}) {
+  const r = o.r == null ? 18 : o.r;
+  ctx.save();
+  if (o.shadow !== false) {
+    ctx.shadowColor = o.shadowColor || 'rgba(0,0,0,.35)';
+    ctx.shadowBlur = o.shadowBlur == null ? 18 : o.shadowBlur;
+    ctx.shadowOffsetY = o.shadowOffsetY == null ? 6 : o.shadowOffsetY;
+  }
+  roundRect(ctx, x, y, w, h, r);
+  ctx.fillStyle = o.fill || 'rgba(16,20,36,.86)';
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  if (o.stroke) { ctx.lineWidth = o.lineWidth || 2; ctx.strokeStyle = o.stroke; ctx.stroke(); }
+  ctx.restore();
+}
+function text(ctx, str, x, y, o = {}) {
+  ctx.save();
+  const size = o.size || 20;
+  const weight = o.weight || 800;
+  ctx.font = `${weight} ${size}px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif`;
+  ctx.textAlign = o.align || 'left';
+  ctx.textBaseline = o.baseline || 'middle';
+  if (o.stroke) {
+    ctx.lineWidth = o.strokeWidth || Math.max(3, size * 0.16);
+    ctx.strokeStyle = o.stroke;
+    ctx.lineJoin = 'round';
+    ctx.strokeText(str, x, y);
+  }
+  if (o.shadow) { ctx.shadowColor = o.shadow; ctx.shadowBlur = o.shadowBlur || 8; ctx.shadowOffsetY = o.shadowY || 2; }
+  ctx.fillStyle = o.color || '#fff';
+  ctx.fillText(str, x, y);
+  ctx.restore();
+}
+function measure(ctx, str, size, weight = 800) {
+  ctx.font = `${weight} ${size}px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif`;
+  return ctx.measureText(str).width;
+}
+function button(ctx, r, label, o = {}) {
+  const pressed = o.pressed ? 2 : 0;
+  const y = r.y + pressed;
+  ctx.save();
+  if (o.shadow !== false) {
+    ctx.shadowColor = 'rgba(0,0,0,.30)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = o.pressed ? 2 : 6;
+  }
+  roundRect(ctx, r.x, y, r.w, r.h, o.r == null ? 16 : o.r);
+  const g = ctx.createLinearGradient(0, y, 0, y + r.h);
+  if (o.disabled) { g.addColorStop(0, 'rgba(90,96,120,.55)'); g.addColorStop(1, 'rgba(60,66,90,.55)'); }
+  else {
+    g.addColorStop(0, o.fill1 || '#ffd76a'); g.addColorStop(1, o.fill2 || '#f2a33c');
+  }
+  ctx.fillStyle = g; ctx.fill();
+  ctx.shadowColor = 'transparent';
+  if (o.stroke !== false) {
+    roundRect(ctx, r.x, y, r.w, r.h, o.r == null ? 16 : o.r);
+    ctx.lineWidth = o.lineWidth || 2;
+    ctx.strokeStyle = o.disabled ? 'rgba(255,255,255,.14)' : (o.stroke || 'rgba(255,255,255,.55)');
+    ctx.stroke();
+  }
+  // 高光
+  if (!o.disabled && o.gloss !== false) {
+    roundRect(ctx, r.x + 6, y + 4, r.w - 12, r.h * 0.38, 10);
+    ctx.fillStyle = 'rgba(255,255,255,.22)'; ctx.fill();
+  }
+  const size = o.size || Math.min(26, r.h * 0.42);
+  text(ctx, label, r.x + r.w / 2, y + r.h / 2 + 1, {
+    size, color: o.disabled ? 'rgba(255,255,255,.45)' : (o.color || '#3a2408'),
+    align: 'center', weight: 900, shadow: o.textShadow === false ? null : null,
+  });
+  ctx.restore();
+}
+function bar(ctx, x, y, w, h, k, o = {}) {
+  k = clamp(k, 0, 1);
+  roundRect(ctx, x, y, w, h, h / 2); ctx.fillStyle = o.bg || 'rgba(0,0,0,.45)'; ctx.fill();
+  if (k > 0) {
+    roundRect(ctx, x, y, Math.max(h, w * k), h, h / 2);
+    const g = ctx.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, o.c1 || '#ff6b57'); g.addColorStop(1, o.c2 || '#ffd76a');
+    ctx.fillStyle = o.color || g; ctx.fill();
+  }
+  if (o.stroke) { roundRect(ctx, x, y, w, h, h / 2); ctx.lineWidth = 1.5; ctx.strokeStyle = o.stroke; ctx.stroke(); }
+}
+function star(ctx, x, y, r, filled, o = {}) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(o.rot || 0);
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5;
+    const rr = i % 2 === 0 ? r : r * 0.45;
+    ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr);
+  }
+  ctx.closePath();
+  if (filled) {
+    const g = ctx.createLinearGradient(0, -r, 0, r);
+    g.addColorStop(0, o.c1 || '#ffe58a'); g.addColorStop(1, o.c2 || '#ffb52e');
+    ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = Math.max(1.5, r * 0.12); ctx.strokeStyle = o.stroke || 'rgba(120,70,0,.55)'; ctx.stroke();
+  } else {
+    ctx.fillStyle = o.empty || 'rgba(255,255,255,.13)'; ctx.fill();
+    ctx.lineWidth = Math.max(1, r * 0.1); ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.stroke();
+  }
+  ctx.restore();
+}
+function gradient(ctx, W, H, colors, vertical = true) {
+  const g = ctx.createLinearGradient(0, 0, vertical ? 0 : W, vertical ? H : 0);
+  colors.forEach((c, i) => g.addColorStop(i / Math.max(1, colors.length - 1), c));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function vignette(ctx, W, H, strength = 0.35) {
+  const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, `rgba(0,0,0,${strength})`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function icon(ctx, kind, x, y, s, color) {
+  ctx.save(); ctx.translate(x, y); ctx.strokeStyle = color || '#fff'; ctx.fillStyle = color || '#fff';
+  ctx.lineWidth = Math.max(2, s * 0.12); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const h = s / 2;
+  if (kind === 'play') { ctx.beginPath(); ctx.moveTo(-h * 0.55, -h); ctx.lineTo(h * 0.9, 0); ctx.lineTo(-h * 0.55, h); ctx.closePath(); ctx.fill(); }
+  else if (kind === 'pause') { ctx.fillRect(-h * 0.62, -h, h * 0.42, h * 2); ctx.fillRect(h * 0.2, -h, h * 0.42, h * 2); }
+  else if (kind === 'back') { ctx.beginPath(); ctx.moveTo(h * 0.35, -h); ctx.lineTo(-h * 0.55, 0); ctx.lineTo(h * 0.35, h); ctx.stroke(); }
+  else if (kind === 'restart') { ctx.beginPath(); ctx.arc(0, 0, h * 0.72, -Math.PI * 0.35, Math.PI * 1.45); ctx.stroke(); ctx.beginPath(); ctx.moveTo(h * 0.68, -h * 0.55); ctx.lineTo(h * 0.92, h * 0.05); ctx.lineTo(h * 0.28, -h * 0.06); ctx.fill(); }
+  else if (kind === 'gear') {
+    ctx.beginPath(); ctx.arc(0, 0, h * 0.34, 0, Math.PI * 2); ctx.stroke();
+    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; ctx.beginPath(); ctx.moveTo(Math.cos(a) * h * 0.52, Math.sin(a) * h * 0.52); ctx.lineTo(Math.cos(a) * h * 0.92, Math.sin(a) * h * 0.92); ctx.stroke(); }
+  }
+  else if (kind === 'sound') { ctx.beginPath(); ctx.moveTo(-h, -h * 0.35); ctx.lineTo(-h * 0.45, -h * 0.35); ctx.lineTo(h * 0.1, -h * 0.8); ctx.lineTo(h * 0.1, h * 0.8); ctx.lineTo(-h * 0.45, h * 0.35); ctx.lineTo(-h, h * 0.35); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.arc(h * 0.18, 0, h * 0.55, -0.9, 0.9); ctx.stroke(); }
+  else if (kind === 'mute') { ctx.beginPath(); ctx.moveTo(-h, -h * 0.3); ctx.lineTo(-h * 0.3, -h * 0.3); ctx.lineTo(h * 0.3, -h * 0.8); ctx.lineTo(h * 0.3, h * 0.8); ctx.lineTo(-h * 0.3, h * 0.3); ctx.lineTo(-h, h * 0.3); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(h * 0.55, -h * 0.4); ctx.lineTo(h * 1.0, h * 0.4); ctx.moveTo(h * 1.0, -h * 0.4); ctx.lineTo(h * 0.55, h * 0.4); ctx.stroke(); }
+  else if (kind === 'lock') { ctx.fillRect(-h * 0.6, -h * 0.05, h * 1.2, h * 0.85); ctx.beginPath(); ctx.arc(0, -h * 0.05, h * 0.4, Math.PI, 0); ctx.stroke(); }
+  else if (kind === 'home') { ctx.beginPath(); ctx.moveTo(-h, 0); ctx.lineTo(0, -h); ctx.lineTo(h, 0); ctx.stroke(); ctx.fillRect(-h * 0.55, 0, h * 1.1, h * 0.75); }
+  else if (kind === 'star') { ctx.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5; const rr = i % 2 ? h * 0.45 : h; ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr); } ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+}
+function entering(t, dur = 0.35) { return easeOutCubic(clamp(t / dur, 0, 1)); }
+
+return { roundRect, rect, panel, text, measure, button, bar, star, gradient, vignette, icon, entering };
+})();
+__m["js/art.js"] = (function(){
+/* =========================================================================
+ * art.js —— 程序化美术：所有画面零外部素材，按主题调色板实时绘制
+ *   sky / 场景 / 角色 / 建筑 / 投射物 / 拾取物
+ * ========================================================================= */
+const { clamp, TAU, hashString, mulberry32 } = __m["js/core.js"];
+
+const { roundRect, bar } = __m["js/render.js"];
+
+
+const DEF = {
+  sky: ['#101427', '#2b1d3a'], ground: '#3a2d3f', groundDark: '#241a2b',
+  accent: '#ffcf5c', accent2: '#ff7a59', hero: '#8fd3ff', hero2: '#3f7ea8',
+  enemy: '#c85a6a', enemy2: '#7a2f42', gold: '#ffd76a', text: '#ffffff',
+  danger: '#ff5d5d', ok: '#62d68f', ui: 'rgba(16,20,36,.86)', ui2: 'rgba(255,255,255,.12)', ink: '#101427',
+};
+
+function pal(theme) {
+  const p = { ...DEF, ...(theme.palette || {}) };
+  if (!Array.isArray(p.sky)) p.sky = DEF.sky;
+  return p;
+}
+
+function makeArt(theme) {
+  const C = pal(theme);
+  const mood = theme.mood || 'night';
+  const seed = hashString(theme.id || 'theme');
+  const rnd = mulberry32(seed);
+
+  function sky(ctx, W, H, t) {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, C.sky[0]); g.addColorStop(0.65, C.sky[1]); g.addColorStop(1, C.groundDark);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    if (mood === 'space') {
+      for (let i = 0; i < 90; i++) {
+        const x = rnd() * W, y = rnd() * H * 0.8, s = rnd() * 2 + 0.4;
+        ctx.globalAlpha = 0.3 + 0.5 * (0.5 + 0.5 * Math.sin(t * 1.2 + i));
+        ctx.fillStyle = '#fff'; ctx.fillRect(x, y, s, s);
+      }
+      ctx.globalAlpha = 1;
+      const gg = ctx.createRadialGradient(W * 0.78, H * 0.22, 4, W * 0.78, H * 0.22, H * 0.34);
+      gg.addColorStop(0, 'rgba(140,190,255,.55)'); gg.addColorStop(1, 'rgba(140,190,255,0)');
+      ctx.fillStyle = gg; ctx.fillRect(0, 0, W, H);
+    } else if (mood === 'night' || mood === 'dusk') {
+      for (let i = 0; i < 46; i++) {
+        const x = rnd() * W, y = rnd() * H * 0.55, s = rnd() * 1.8 + 0.4;
+        ctx.globalAlpha = 0.25 + 0.5 * (0.5 + 0.5 * Math.sin(t * 0.8 + i * 1.7));
+        ctx.fillStyle = '#fff8e0'; ctx.fillRect(x, y, s, s);
+      }
+      ctx.globalAlpha = 1;
+      const mx = W * 0.8, my = H * 0.18, mr = Math.min(W, H) * 0.075;
+      const mg = ctx.createRadialGradient(mx, my, mr * 0.4, mx, my, mr * 2.6);
+      mg.addColorStop(0, 'rgba(255,245,210,.35)'); mg.addColorStop(1, 'rgba(255,245,210,0)');
+      ctx.fillStyle = mg; ctx.fillRect(mx - mr * 3, my - mr * 3, mr * 6, mr * 6);
+      ctx.fillStyle = '#fff2c4'; ctx.beginPath(); ctx.arc(mx, my, mr, 0, TAU); ctx.fill();
+      ctx.fillStyle = C.sky[1]; ctx.beginPath(); ctx.arc(mx - mr * 0.42, my - mr * 0.3, mr * 0.92, 0, TAU); ctx.fill();
+    } else if (mood === 'underwater') {
+      for (let i = 0; i < 26; i++) {
+        const x = rnd() * W, y = H - ((t * (18 + rnd() * 30) + rnd() * H) % H);
+        ctx.globalAlpha = 0.18 + rnd() * 0.2; ctx.fillStyle = '#dffcff';
+        ctx.beginPath(); ctx.arc(x, y, 2 + rnd() * 5, 0, TAU); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      for (let i = 0; i < 5; i++) {
+        ctx.globalAlpha = 0.06; ctx.fillStyle = '#bff3ff';
+        ctx.beginPath(); ctx.moveTo(rnd() * W, 0); ctx.lineTo(W * 0.3 + i * 80, H); ctx.lineTo(W * 0.3 + i * 80 + 80, H); ctx.closePath(); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    return g;
+  }
+
+  function farLayers(ctx, W, H, t, groundY) {
+    const p1 = groundY - H * 0.16;
+    ctx.fillStyle = 'rgba(0,0,0,.18)';
+    ctx.beginPath(); ctx.moveTo(0, groundY);
+    let x = 0;
+    while (x < W) { const w = 120 + rnd() * 200, h = 20 + rnd() * 70; ctx.lineTo(x, p1 - h * 0.3); ctx.lineTo(x + w * 0.5, p1 - h); ctx.lineTo(x + w, p1 - h * 0.2); x += w; }
+    ctx.lineTo(W, groundY); ctx.closePath(); ctx.fill();
+    // 中景建筑/树剪影
+    const base = groundY - 4;
+    x = -40;
+    while (x < W + 60) {
+      const w = 46 + rnd() * 70, h = 50 + rnd() * 120;
+      ctx.fillStyle = 'rgba(0,0,0,.28)';
+      if (mood === 'underwater') {
+        ctx.beginPath(); ctx.ellipse(x + w / 2, base, w * 0.3, h * 0.5, 0, Math.PI, 0); ctx.fill();
+      } else if (mood === 'forest') {
+        ctx.beginPath(); ctx.moveTo(x + w / 2, base - h); ctx.lineTo(x + w, base); ctx.lineTo(x, base); ctx.closePath(); ctx.fill();
+      } else {
+        ctx.fillRect(x, base - h, w, h);
+        if (rnd() < 0.6) { ctx.fillStyle = 'rgba(255,220,140,.35)'; for (let k = 0; k < 4; k++) ctx.fillRect(x + 8 + rnd() * (w - 20), base - h + 10 + rnd() * (h - 24), 5, 7); }
+      }
+      x += w + 12;
+    }
+    // 地平线
+    const gg = ctx.createLinearGradient(0, groundY, 0, H);
+    gg.addColorStop(0, C.ground); gg.addColorStop(1, C.groundDark);
+    ctx.fillStyle = gg; ctx.fillRect(0, groundY, W, H - groundY);
+    ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.fillRect(0, groundY, W, 3);
+  }
+
+  /* 静态背景离屏缓存：标题/结算场景每帧重绘天空+远景是主要开销 */
+  let bgCache = null, bgKey = '';
+  function scene(ctx, W, H, t, o = {}) {
+    const groundY = o.groundY == null ? H * 0.72 : o.groundY;
+    const key = W + 'x' + H + '@' + Math.round(groundY);
+    if (key !== bgKey) {
+      bgCache = null; bgKey = key;
+      const doc = ctx.canvas && ctx.canvas.ownerDocument;
+      if (doc && doc.createElement) {
+        const dpr = Math.min(2, (ctx.getTransform && ctx.getTransform().a) || 1);
+        const c = doc.createElement('canvas');
+        c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+        const g = c.getContext('2d');
+        if (g) {
+          g.setTransform(dpr, 0, 0, dpr, 0, 0);
+          sky(g, W, H, 0);
+          farLayers(g, W, H, 0, groundY);
+          bgCache = c;
+        }
+      }
+    }
+    if (bgCache) { ctx.drawImage(bgCache, 0, 0, W, H); return groundY; }
+    sky(ctx, W, H, t);
+    farLayers(ctx, W, H, t, groundY);
+    return groundY;
+  }
+
+  /* 角色：身体 + 头 + 眼睛 + 武器/配件。kind: hero|enemy|boss，role: melee|ranged|mage|heal|tank */
+  function char(ctx, x, y, s, o = {}) {
+    const kind = o.kind || 'hero';
+    const facing = o.facing == null ? 1 : o.facing;
+    const role = o.role || 'melee';
+    const tier = o.tier || 1;
+    const t = o.t || 0;
+    const flash = o.flash ? 1 : 0;
+    // 受击白闪：直接换配色（原来的 source-atop 叠加会在不透明背景上糊出一个白方块）
+    const body = flash ? '#f2f4ff' : kind === 'enemy' ? C.enemy : kind === 'boss' ? C.enemy2 : C.hero;
+    const body2 = flash ? '#ffffff' : kind === 'enemy' ? C.enemy2 : kind === 'boss' ? C.danger : C.hero2;
+    const hash = hashString((o.name || '') + tier);
+    ctx.save(); ctx.translate(x, y);
+    const breathe = Math.sin(t * 6 + hash) * 0.02;
+    ctx.scale(s * facing, s * (1 + breathe));
+    // 影子
+    ctx.save(); ctx.scale(1 / Math.max(0.2, facing), 1); ctx.globalAlpha = 0.28; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(0, 2, 13, 4.5, 0, 0, TAU); ctx.fill(); ctx.restore();
+    // 腿（走路摆）
+    const walk = o.moving ? Math.sin(t * 9 + hash) * 3 : 0;
+    ctx.fillStyle = body2;
+    ctx.fillRect(-6, -8 + walk * 0.3, 4.5, 9 + walk * 0.4);
+    ctx.fillRect(2, -8 - walk * 0.3, 4.5, 9 - walk * 0.4);
+    // 身体
+    const bh = 18 + tier * 1.6;
+    roundRect(ctx, -9, -8 - bh, 18, bh, 7); ctx.fillStyle = body; ctx.fill();
+    // 披风/护甲
+    ctx.fillStyle = body2;
+    roundRect(ctx, -11, -8 - bh + 4, 22, 5, 2); ctx.fill();
+    if (kind !== 'enemy') { ctx.fillStyle = C.accent; ctx.fillRect(-3, -8 - bh + 4, 6, 3); }
+    // 头
+    const hy = -8 - bh - 8;
+    ctx.beginPath(); ctx.arc(0, hy, 9.5, 0, TAU); ctx.fillStyle = kind === 'enemy' ? body2 : '#f6d3aa'; ctx.fill();
+    if (kind === 'enemy') { ctx.strokeStyle = C.enemy2; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(0, hy, 9.5, 0, TAU); ctx.stroke(); }
+    // 眼睛
+    ctx.fillStyle = kind === 'enemy' ? '#2a0d14' : '#222';
+    ctx.beginPath(); ctx.arc(3.4, hy - 1, 1.5, 0, TAU); ctx.fill();
+    if (kind === 'boss') {
+      ctx.fillStyle = C.gold;
+      ctx.beginPath(); ctx.moveTo(-9, hy - 9); ctx.lineTo(-5, hy - 15); ctx.lineTo(-1, hy - 10); ctx.lineTo(3, hy - 16); ctx.lineTo(7, hy - 9); ctx.closePath(); ctx.fill();
+    } else if (hash % 3 === 0) {
+      ctx.fillStyle = kind === 'enemy' ? C.enemy : C.accent2;
+      roundRect(ctx, -10, hy - 10, 20, 4, 2); ctx.fill();
+    } else if (hash % 3 === 1) {
+      ctx.fillStyle = kind === 'enemy' ? C.enemy2 : C.accent;
+      ctx.beginPath(); ctx.arc(0, hy - 10, 5, Math.PI, 0); ctx.fill();
+    }
+    // 武器
+    ctx.strokeStyle = kind === 'enemy' ? C.enemy2 : C.accent2; ctx.lineWidth = 2.4; ctx.lineCap = 'round';
+    if (role === 'ranged') {
+      ctx.beginPath(); ctx.arc(10, -8 - bh * 0.55, 7, -1.2, 1.2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(13.5, -8 - bh * 0.55 - 7.6); ctx.lineTo(13.5, -8 - bh * 0.55 + 7.6); ctx.stroke();
+    } else if (role === 'mage') {
+      ctx.beginPath(); ctx.moveTo(10, -8 - bh * 0.2); ctx.lineTo(14, -8 - bh - 14); ctx.stroke();
+      ctx.fillStyle = C.accent; ctx.beginPath(); ctx.arc(14, -8 - bh - 16, 3.4, 0, TAU); ctx.fill();
+    } else if (role === 'heal') {
+      ctx.beginPath(); ctx.moveTo(9, -8 - bh * 0.6); ctx.lineTo(17, -8 - bh * 0.6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(13, -8 - bh * 0.6 - 4); ctx.lineTo(13, -8 - bh * 0.6 + 4); ctx.stroke();
+    } else if (role === 'tank') {
+      ctx.fillStyle = C.ui2; roundRect(ctx, 6, -8 - bh * 0.85, 9, bh * 0.8, 4); ctx.fill();
+      ctx.strokeStyle = C.accent; ctx.strokeRect(6, -8 - bh * 0.85, 9, bh * 0.8);
+    } else {
+      ctx.beginPath(); ctx.moveTo(10, -8 - bh * 0.45); ctx.lineTo(19, -8 - bh * 0.95); ctx.stroke();
+    }
+    ctx.restore();
+    if (o.hp != null && o.hp < 1) {
+      const w = Math.max(18, s * 22);
+      ctx.save(); ctx.translate(x - w / 2, y - s * 46); bar(ctx, 0, 0, w, 4, o.hp, { c1: C.danger, c2: C.ok }); ctx.restore();
+    }
+  }
+
+  function building(ctx, x, y, w, h, o = {}) {
+    const lvl = o.level || 1;
+    const t = o.t || 0;
+    const kind = o.kind || 0;
+    ctx.save(); ctx.translate(x, y);
+    ctx.globalAlpha = 0.3; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(0, 0, w * 0.5, 6, 0, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+    // 基座
+    ctx.fillStyle = C.groundDark; roundRect(ctx, -w / 2, -8, w, 8, 3); ctx.fill();
+    // 主体
+    const g = ctx.createLinearGradient(0, -h, 0, 0);
+    g.addColorStop(0, C.ui2); g.addColorStop(1, C.groundDark);
+    roundRect(ctx, -w * 0.42, -h, w * 0.84, h, 6); ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = o.selected ? C.accent : 'rgba(255,255,255,.18)'; roundRect(ctx, -w * 0.42, -h, w * 0.84, h, 6); ctx.stroke();
+    if (kind === 0) { // 兵营
+      ctx.fillStyle = C.accent2; ctx.beginPath(); ctx.moveTo(-w * 0.42, -h); ctx.lineTo(0, -h - 14); ctx.lineTo(w * 0.42, -h); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = C.ink; roundRect(ctx, -w * 0.14, -h * 0.55, w * 0.28, h * 0.55, 3); ctx.fill();
+    } else if (kind === 1) { // 箭塔
+      roundRect(ctx, -w * 0.2, -h - 26, w * 0.4, 26, 3); ctx.fillStyle = C.accent2; ctx.fill();
+      ctx.fillStyle = C.ink; for (let i = 0; i < 3; i++) { ctx.fillRect(-w * 0.2 + i * w * 0.15, -h - 26, w * 0.07, 8); }
+    } else if (kind === 2) { // 法阵
+      ctx.strokeStyle = C.accent; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, -h - 8, 8 + Math.sin(t * 3) * 1.5, 0, TAU); ctx.stroke();
+      ctx.fillStyle = C.accent; ctx.globalAlpha = 0.8; ctx.beginPath(); ctx.arc(0, -h - 8, 3, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+    } else { // 墙
+      ctx.fillStyle = C.groundDark; for (let i = 0; i < 3; i++) ctx.fillRect(-w * 0.45, -h + i * (h / 3), w * 0.9, h / 6);
+    }
+    // 等级角标
+    if (lvl > 1) {
+      ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(w * 0.36, -h + 4, 9, 0, TAU); ctx.fill();
+      ctx.fillStyle = C.ink; ctx.font = '900 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(lvl), w * 0.36, -h + 4);
+    }
+    ctx.restore();
+    if (o.hp != null && o.hp < 1) { ctx.save(); ctx.translate(x - w * 0.42, y - h - 10); bar(ctx, 0, 0, w * 0.84, 4, o.hp); ctx.restore(); }
+    if (o.cd != null) { ctx.save(); ctx.translate(x - w * 0.42, y - 6); bar(ctx, 0, 0, w * 0.84, 3, 1 - o.cd, { c1: C.accent, c2: C.gold }); ctx.restore(); }
+  }
+
+  function projectile(ctx, x, y, o = {}) {
+    const kind = o.kind || 'arrow';
+    ctx.save(); ctx.translate(x, y);
+    if (kind === 'arrow') {
+      const a = o.angle || 0; ctx.rotate(a);
+      ctx.strokeStyle = o.color || C.accent; ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.moveTo(-10, 0); ctx.lineTo(8, 0); ctx.stroke();
+      ctx.fillStyle = o.color || C.accent; ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(5, -4); ctx.lineTo(5, 4); ctx.closePath(); ctx.fill();
+    } else if (kind === 'orb') {
+      const r = o.r || 6;
+      const g = ctx.createRadialGradient(0, 0, 1, 0, 0, r * 2);
+      g.addColorStop(0, '#fff'); g.addColorStop(0.4, o.color || C.accent); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 2, 0, TAU); ctx.fill();
+    } else if (kind === 'shock') {
+      ctx.strokeStyle = o.color || C.hero; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, o.r || 10, 0, TAU); ctx.stroke();
+    } else {
+      ctx.fillStyle = o.color || C.gold;
+      ctx.beginPath(); ctx.arc(0, 0, o.r || 4, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function pickup(ctx, x, y, o = {}) {
+    const t = o.t || 0, r = o.r || 9;
+    ctx.save(); ctx.translate(x, y + Math.sin(t * 3) * 3);
+    ctx.globalAlpha = 0.9;
+    const g = ctx.createRadialGradient(0, 0, 1, 0, 0, r * 2);
+    g.addColorStop(0, o.color || C.gold); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 2, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = o.color || C.gold;
+    if (o.shape === 'gem') { ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(r * 0.8, 0); ctx.lineTo(0, r); ctx.lineTo(-r * 0.8, 0); ctx.closePath(); ctx.fill(); }
+    else if (o.shape === 'star') { ctx.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5; const rr = i % 2 ? r * 0.5 : r; ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr); } ctx.closePath(); ctx.fill(); }
+    else { ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill(); }
+    ctx.restore();
+  }
+
+  function flag(ctx, x, y, color, t) {
+    ctx.save(); ctx.translate(x, y);
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -54); ctx.stroke();
+    ctx.fillStyle = color || C.accent;
+    ctx.beginPath(); ctx.moveTo(0, -54);
+    for (let i = 0; i <= 8; i++) ctx.lineTo(i * 4.4, -54 + Math.sin(t * 5 + i * 0.7) * 2.4 + i * 0.4);
+    for (let i = 8; i >= 0; i--) ctx.lineTo(i * 4.4, -54 + Math.sin(t * 5 + i * 0.7) * 2.4 + 14 - i * 0.4);
+    ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+
+  return { C, mood, sky, scene, char, building, projectile, pickup, flag };
+}
+
+return { makeArt };
+})();
+__m["js/app.js"] = (function(){
+/* =========================================================================
+ * app.js —— 游戏外壳：画布/自适应/固定步长主循环/场景栈（标题-选关-战斗-结算-
+ *           设置-说明）/存档/音频解锁/暂停/调试 API
+ * 规则层（js/rules/*.js）只负责玩法；这里负责所有通用壳层。
+ * ========================================================================= */
+const { clamp, makeSave, RNG, fmt, fmtTime } = __m["js/core.js"];
+
+const { Layout, Sound, Fx, Input } = __m["js/platform.js"];
+
+const { makeArt } = __m["js/art.js"];
+
+const R = __m["js/render.js"];
+
+
+const STEP = 1 / 60;
+
+class App {
+  constructor(canvas, content, createRule) {
+    this.canvas = canvas;
+    this.content = content;
+    this.createRule = createRule;
+    this.cfg = content.config || {};
+    this.portrait = (content.orientation || 'landscape') === 'portrait';
+    this.W = this.portrait ? 720 : 1280;
+    this.H = this.portrait ? 1280 : 720;
+    this.layout = new Layout(canvas, this.W, this.H);
+    this.art = makeArt(content.theme || {});
+    this.audio = new Sound(content.theme || {});
+    this.fx = new Fx();
+    this.save = makeSave(content.slug || 'game', content.saveDefaults || {});
+    this.ctx = canvas.getContext('2d');
+    this.scene = 'title';
+    this.sceneT = 0;
+    this.acc = 0; this.last = 0; this.fps = 60; this.frames = 0; this.fpsT = 0;
+    this.buttons = [];
+    this.toasts = [];
+    this.levelId = 0; this.rule = null; this.pendingResult = null; this.finishing = 0;
+    this.paused = false;
+    this.started = false;
+    this.demoT = 0;
+    this.tipsSeen = this.save.data.tipsSeen || {};
+    this.inputBound = false;
+    this.loop = this.loop.bind(this);
+    this.input = null;
+  }
+  mount() {
+    this.layout.resize();
+    this.layout.applyTransform(this.ctx);
+    this.input = new Input(this.canvas, this.layout, {
+      onDown: (x, y) => this.onDown(x, y),
+      onMove: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('move', x, y); },
+      onUp: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('up', x, y); },
+      onKey: (k) => this.onKey(k),
+    });
+    document.addEventListener('visibilitychange', () => { if (document.hidden && this.scene === 'play') this.setPaused(true); });
+    requestAnimationFrame(this.loop);
+  }
+  begin() {
+    if (this.started) return;
+    this.started = true;
+    if (!this.audio.ensure()) { /* 无音频环境也继续 */ }
+    for (const k of ['music', 'sfx']) this.audio.setMuted(k, !this.save.settings[k]);
+    if (this.save.data.firstRun) { this.save.data.firstRun = false; this.save.flush(); }
+  }
+  /* ---------------------------- 主循环 ---------------------------- */
+  loop(ts) {
+    if (!this.last) this.last = ts;
+    let dt = (ts - this.last) / 1000; this.last = ts;
+    if (dt > 0.25) dt = 0.25;
+    this.frames++; this.fpsT += dt;
+    if (this.fpsT >= 0.5) { this.fps = this.frames / this.fpsT; this.frames = 0; this.fpsT = 0; }
+    this.sceneT += dt; this.demoT += dt;
+    if (this.scene === 'play' && !this.paused) {
+      this.acc += dt;
+      let guard = 0;
+      while (this.acc >= STEP && guard < 4) { this.step(STEP); this.acc -= STEP; guard++; }
+      if (guard >= 4) this.acc = 0;
+    } else {
+      this.acc = 0;
+    }
+    this.fx.update(dt);
+    this.updateToasts(dt);
+    if (this.scene === 'play' && this.rule && !this.paused) {
+      if (this.rule.status !== 'playing' && this.finishing === 0) {
+        this.finishing = 0.0001;
+        this.audio.sfx(this.rule.status === 'won' ? 'win' : 'lose');
+      }
+      if (this.finishing > 0) {
+        this.finishing += dt;
+        if (this.finishing > 1.25) this.finishLevel();
+      }
+    }
+    this.render(dt);
+    requestAnimationFrame(this.loop);
+  }
+  step(dt) {
+    if (!this.rule) return;
+    this.rule.update(dt);
+  }
+  /* 测试用：用机器人策略快进 n 秒（不渲染），返回当前状态 */
+  fastForward(seconds) {
+    if (this.scene !== 'play' || !this.rule) return 'no-play';
+    const steps = Math.round((seconds || 60) * 60);
+    for (let i = 0; i < steps && this.rule.status === 'playing'; i++) {
+      if (this.rule.bot) this.rule.bot(1 / 60);
+      this.step(1 / 60);
+    }
+    return this.rule.status;
+  }
+  /* ---------------------------- 场景 ---------------------------- */
+  go(scene) {
+    this.scene = scene; this.sceneT = 0; this.buttons = [];
+    if (scene !== 'play') { this.paused = false; }
+    if (scene === 'title') this.audio.musicGain && this.audio.musicGain.gain.setTargetAtTime(0.26, this.audio.ctx.currentTime, 0.2);
+  }
+  startLevel(id) {
+    const levels = this.content.levels || [];
+    const lv = levels.find((l) => l.id === id) || levels[0];
+    if (!lv) return false;
+    this.levelId = lv.id;
+    this.finishing = 0; this.pendingResult = null; this.paused = false;
+    const self = this;
+    const svc = {
+      app: this, content: this.content, level: lv, levelId: lv.id,
+      W: this.W, H: this.H, portrait: this.portrait,
+      rng: new RNG(this.content.slug + ':' + lv.id + ':' + (this.cfg.seed || 0)),
+      save: this.save, audio: this.audio, fx: this.fx, art: this.art,
+      finish: (payload) => { if (!self.pendingResult) self.pendingResult = payload || {}; },
+      toast: (msg) => self.toast(msg),
+      replay: () => self.startLevel(self.levelId),
+      next: () => self.nextLevel(),
+    };
+    this.rule = this.createRule(svc);
+    this.rule.init();
+    this.scene = 'play'; this.sceneT = 0; this.buttons = [];
+    this.audio.ensure();
+    return true;
+  }
+  finishLevel() {
+    const win = this.rule && this.rule.status === 'won';
+    const payload = this.pendingResult || (this.rule && this.rule.result && this.rule.result()) || {};
+    const stars = win ? clamp(Math.round(payload.stars == null ? 1 : payload.stars), 1, 3) : 0;
+    if (win) {
+      this.save.complete(this.levelId, stars, payload.score || 0);
+      if (payload.coins) this.save.addCoins(payload.coins);
+      this.save.data.playSec = (this.save.data.playSec || 0) + Math.round(this.sceneT);
+      this.save.flush();
+    }
+    this.result = { win, stars, payload };
+    this.scene = 'result'; this.sceneT = 0; this.buttons = [];
+  }
+  nextLevel() {
+    const levels = this.content.levels || [];
+    const i = levels.findIndex((l) => l.id === this.levelId);
+    if (i >= 0 && i + 1 < levels.length) return this.startLevel(levels[i + 1].id);
+    this.go('levels');
+    return false;
+  }
+  setPaused(v) { this.paused = !!v; this.sceneT = this.sceneT; this.buttons = []; }
+  toast(msg) {
+    if (!msg) return;
+    this.toasts.push({ msg: String(msg), life: 0, max: 2.2 });
+    if (this.toasts.length > 3) this.toasts.shift();
+  }
+  updateToasts(dt) {
+    for (let i = this.toasts.length - 1; i >= 0; i--) { this.toasts[i].life += dt; if (this.toasts[i].life >= this.toasts[i].max) this.toasts.splice(i, 1); }
+  }
+  /* ---------------------------- 输入分发 ---------------------------- */
+  onDown(x, y) {
+    this.begin();
+    for (let i = this.buttons.length - 1; i >= 0; i--) {
+      const b = this.buttons[i];
+      if (b.disabled) continue;
+      if (x >= b.r.x && x <= b.r.x + b.r.w && y >= b.r.y && y <= b.r.y + b.r.h) {
+        this.audio.sfx('click');
+        this.vibrate(8);
+        b.fn();
+        return;
+      }
+    }
+    if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('down', x, y);
+  }
+  onKey(k) {
+    if (this.scene === 'play') {
+      if (k === 'Escape' || k === 'p' || k === 'P') { this.setPaused(!this.paused); }
+      if (this.rule && !this.paused) this.rule.pointer('key', 0, 0, k);
+    } else if (k === 'Escape' || k === 'Backspace') {
+      if (this.scene === 'levels' || this.scene === 'settings' || this.scene === 'howto') this.go('title');
+      if (this.scene === 'result') this.go('levels');
+    } else if (k === 'Enter' || k === ' ') {
+      if (this.scene === 'title') this.startLevel(this.save.data.unlocked || 1);
+      if (this.scene === 'result' && this.result) { this.result.win ? this.nextLevel() : this.startLevel(this.levelId); }
+    }
+  }
+  vibrate(ms) { try { if (this.save.settings.haptic && navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+
+  /* ---------------------------- 绘制 ---------------------------- */
+  render(dt) {
+    const ctx = this.ctx, W = this.W, H = this.H;
+    this.layout.applyTransform(ctx);
+    ctx.clearRect(0, 0, W, H);
+    this.buttons = [];
+    if (this.scene === 'title') this.drawTitle(ctx);
+    else if (this.scene === 'levels') this.drawLevels(ctx);
+    else if (this.scene === 'play') this.drawPlay(ctx);
+    else if (this.scene === 'result') this.drawResult(ctx);
+    else if (this.scene === 'settings') this.drawSettings(ctx);
+    else if (this.scene === 'howto') this.drawHowto(ctx);
+    if (this.paused && this.scene === 'play') this.drawPause(ctx);
+    this.drawToasts(ctx);
+    this.fx.flashDraw(ctx, W, H);
+  }
+  mkButton(ctx, r, label, fn, o = {}) {
+    this.buttons.push({ r, fn, disabled: !!o.disabled });
+    R.button(ctx, r, label, o);
+  }
+  drawBg(ctx, groundY) {
+    this.art.scene(ctx, this.W, this.H, this.demoT, { groundY });
+  }
+  drawTitle(ctx) {
+    const W = this.W, H = this.H, t = this.demoT, P = this.portrait;
+    const groundY = P ? H * 0.42 : H * 0.60;
+    this.drawBg(ctx, groundY);
+    const pg = ctx.createLinearGradient(0, 0, 0, H);
+    pg.addColorStop(0, 'rgba(0,0,0,.10)'); pg.addColorStop(1, 'rgba(0,0,0,.55)');
+    ctx.fillStyle = pg; ctx.fillRect(0, 0, W, H);
+    // 角色展示（在标题与按钮之间）
+    const art = this.art, n = 4;
+    for (let i = 0; i < n; i++) {
+      const x = W * (0.5 + (i - (n - 1) / 2) * (P ? 0.19 : 0.15));
+      const y = groundY + (i % 2 ? 0 : 8);
+      art.char(ctx, x, y, (P ? 2.1 : 1.8) + (i === 1 ? 0.25 : 0), {
+        kind: i === 2 ? 'enemy' : 'hero', role: ['melee', 'ranged', 'mage', 'heal'][i],
+        facing: i === 2 ? -1 : 1, t: t + i, name: 'showcase' + i, moving: true,
+      });
+    }
+    const titleSize = Math.min(W * 0.085, 92);
+    ctx.save();
+    ctx.font = `900 ${titleSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const y = P ? H * 0.16 : H * 0.21;
+    ctx.lineWidth = titleSize * 0.14; ctx.strokeStyle = 'rgba(8,10,20,.85)'; ctx.lineJoin = 'round';
+    ctx.strokeText(this.content.title, W / 2, y);
+    const tg = ctx.createLinearGradient(0, y - titleSize / 2, 0, y + titleSize / 2);
+    tg.addColorStop(0, '#fff6d8'); tg.addColorStop(0.5, '#ffd76a'); tg.addColorStop(1, '#ff9f43');
+    ctx.fillStyle = tg; ctx.fillText(this.content.title, W / 2, y);
+    ctx.restore();
+    R.text(ctx, this.content.tagline || this.content.subtitle || '', W / 2, y + titleSize * 0.86, {
+      size: Math.min(P ? 20 : 23, W * 0.02), color: 'rgba(255,255,255,.85)', align: 'center', weight: 600,
+    });
+    // 开始按钮
+    const bw = Math.min(W * (P ? 0.62 : 0.34), 460), bh = Math.min(86, H * 0.12);
+    const bx = W / 2 - bw / 2, by = P ? H * 0.50 : H * 0.66;
+    const nextId = Math.min(this.save.data.unlocked || 1, (this.content.levels || []).length || 1);
+    const label = (this.save.data.totalClears || 0) > 0 ? `继续游戏 · 第${nextId}关` : '开始游戏';
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, label, () => this.startLevel(nextId), { size: Math.min(30, bh * 0.38) });
+    // 次级按钮
+    const sw = Math.min(W * (P ? 0.26 : 0.17), 220), sh = Math.min(58, H * 0.085), gap = 16;
+    const y2 = by + bh + (P ? 28 : 18);
+    const labels = [['关卡', () => this.go('levels')], ['玩法', () => this.go('howto')], ['设置', () => this.go('settings')]];
+    const totalW = labels.length * sw + (labels.length - 1) * gap;
+    labels.forEach(([lb, fn], i) => {
+      const x = W / 2 - totalW / 2 + i * (sw + gap);
+      this.mkButton(ctx, { x, y: y2, w: sw, h: sh }, lb, fn, {
+        fill1: 'rgba(255,255,255,.20)', fill2: 'rgba(255,255,255,.10)', color: '#fff', stroke: 'rgba(255,255,255,.35)', size: Math.min(22, sh * 0.4),
+      });
+    });
+    R.text(ctx, '程序化美术 / 合成音频 / 本地存档', W / 2, H - (P ? 40 : 20), { size: 14, color: 'rgba(255,255,255,.45)', align: 'center', weight: 500 });
+  }
+  /* 选关 */
+  drawLevels(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    const titleY = this.portrait ? 76 : 64;
+    R.text(ctx, '选择关卡', W / 2, titleY, { size: 38, align: 'center', color: '#fff', stroke: 'rgba(0,0,0,.5)' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const stars = this.save.totalStars(), maxStars = (this.content.levels || []).length * 3;
+    R.text(ctx, `★ ${stars} / ${maxStars}`, W - 26, titleY, { size: 20, align: 'right', color: '#ffd76a' });
+    const levels = this.content.levels || [];
+    const chapters = this.content.chapters || [{ name: '关卡', levels: levels.map((l) => l.id) }];
+    const top = this.portrait ? 120 : 104;
+    const bottomPad = 24;
+    const rowH = Math.min(this.portrait ? 200 : 108, (H - top - bottomPad) / chapters.length);
+    chapters.forEach((ch, ci) => {
+      const y0 = top + ci * rowH;
+      R.text(ctx, `${ci + 1}. ${ch.name}`, 30, y0 + 14, { size: Math.min(20, rowH * 0.22), color: 'rgba(255,255,255,.7)', weight: 700 });
+      const perRow = this.portrait ? 5 : Math.min(10, ch.levels.length);
+      const cellW = Math.min(this.portrait ? 118 : 104, (W - 60) / perRow);
+      const cellH = Math.min(cellW, rowH - 34);
+      ch.levels.forEach((id, i) => {
+        const col = i % perRow, row = Math.floor(i / perRow);
+        const x = 30 + col * ((W - 60) / perRow) + ((W - 60) / perRow - cellW) / 2;
+        const y = y0 + 28 + row * (cellH + 10);
+        this.levelCell(ctx, levels.find((l) => l.id === id) || { id, name: '第' + id + '关' }, x, y, cellW, cellH);
+      });
+      if (this.portrait && ci === 0) { /* 保持布局 */ }
+    });
+  }
+  levelCell(ctx, lv, x, y, w, h) {
+    const unlocked = this.save.isUnlocked(lv.id);
+    const st = this.save.starOf(lv.id);
+    const r = { x, y, w, h };
+    const isBoss = !!lv.boss;
+    R.panel(ctx, x, y, w, h, {
+      r: 14, fill: unlocked ? (isBoss ? 'rgba(120,40,60,.85)' : 'rgba(32,40,64,.9)') : 'rgba(24,26,36,.75)',
+      stroke: st > 0 ? 'rgba(255,215,106,.65)' : 'rgba(255,255,255,.12)', shadowBlur: 10,
+    });
+    if (!unlocked) {
+      R.icon(ctx, 'lock', x + w / 2, y + h * 0.42, Math.min(w, h) * 0.28, 'rgba(255,255,255,.3)');
+      R.text(ctx, '未解锁', x + w / 2, y + h * 0.78, { size: Math.min(13, w * 0.16), color: 'rgba(255,255,255,.35)', align: 'center' });
+    } else {
+      R.text(ctx, String(lv.id), x + w / 2, y + h * 0.38, { size: Math.min(26, w * 0.3), color: '#fff', align: 'center', weight: 900 });
+      R.text(ctx, lv.name || '', x + w / 2, y + h * 0.64, { size: Math.min(11, w * 0.137), color: 'rgba(255,255,255,.62)', align: 'center', weight: 600 });
+      for (let i = 0; i < 3; i++) R.star(ctx, x + w / 2 + (i - 1) * Math.min(17, w * 0.2), y + h * 0.84, Math.min(7, w * 0.09), i < st);
+    }
+    this.buttons.push({ r, fn: () => { if (unlocked) this.startLevel(lv.id); } });
+  }
+  /* 战斗场景 */
+  drawPlay(ctx) {
+    const W = this.W, H = this.H, rule = this.rule;
+    if (!rule) return;
+    rule.drawWorld(ctx, this.demoT);
+    this.fx.draw(ctx);
+    // 关卡横幅
+    const intro = clamp(1 - this.sceneT / 1.6, 0, 1);
+    if (intro > 0) {
+      const lv = this.content.levels.find((l) => l.id === this.levelId) || {};
+      ctx.globalAlpha = Math.min(1, intro * 1.6);
+      R.text(ctx, `第 ${this.levelId} 关`, W / 2, H * 0.16, { size: 22, align: 'center', color: 'rgba(255,255,255,.8)', weight: 700 });
+      R.text(ctx, lv.name || '', W / 2, H * 0.16 + 34, { size: 34, align: 'center', color: '#fff', stroke: 'rgba(0,0,0,.6)' });
+      ctx.globalAlpha = 1;
+    }
+    rule.drawHUD(ctx, this.demoT);
+    // 暂停按钮：始终最后画，保证在各玩法 HUD 之上可点
+    const pr = { x: W - 74, y: 16, w: 56, h: 56 };
+    R.panel(ctx, pr.x, pr.y, pr.w, pr.h, { r: 14, fill: 'rgba(10,14,24,.62)', stroke: 'rgba(255,255,255,.2)' });
+    R.icon(ctx, 'pause', pr.x + pr.w / 2, pr.y + pr.h / 2, 22, '#fff');
+    this.buttons.push({ r: pr, fn: () => this.setPaused(true) });
+  }
+  /* 暂停 */
+  drawPause(ctx) {
+    const W = this.W, H = this.H;
+    ctx.fillStyle = 'rgba(6,8,16,.66)'; ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W * 0.46, 520), ph = Math.min(H * 0.62, 520);
+    const px = W / 2 - pw / 2, py = H / 2 - ph / 2;
+    R.panel(ctx, px, py, pw, ph, { fill: 'rgba(20,24,44,.97)', stroke: 'rgba(255,255,255,.2)', r: 24 });
+    R.text(ctx, '已暂停', W / 2, py + 58, { size: 34, align: 'center', color: '#fff' });
+    const bw = pw * 0.66, bh = 60, bx = W / 2 - bw / 2;
+    let by = py + 116;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '继续', () => this.setPaused(false), { size: 26 });
+    by += bh + 14;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '重开本关', () => this.startLevel(this.levelId), {
+      fill1: 'rgba(255,255,255,.2)', fill2: 'rgba(255,255,255,.1)', color: '#fff', stroke: 'rgba(255,255,255,.3)', size: 24,
+    });
+    by += bh + 14;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '返回选关', () => { this.setPaused(false); this.go('levels'); }, {
+      fill1: 'rgba(255,255,255,.2)', fill2: 'rgba(255,255,255,.1)', color: '#fff', stroke: 'rgba(255,255,255,.3)', size: 24,
+    });
+    by += bh + 26;
+    // 音乐/音效开关
+    const tw = (pw - 60) / 2;
+    this.toggle(ctx, px + 20, by, tw, 50, '音乐', this.save.settings.music, (v) => { this.save.setSetting('music', v); this.audio.setMuted('music', !v); });
+    this.toggle(ctx, px + 40 + tw, by, tw, 50, '音效', this.save.settings.sfx, (v) => { this.save.setSetting('sfx', v); this.audio.setMuted('sfx', !v); });
+  }
+  toggle(ctx, x, y, w, h, label, on, fn) {
+    R.panel(ctx, x, y, w, h, { r: 12, fill: on ? 'rgba(255,215,106,.16)' : 'rgba(255,255,255,.06)', stroke: on ? 'rgba(255,215,106,.6)' : 'rgba(255,255,255,.16)', shadow: false });
+    R.text(ctx, label, x + 14, y + h / 2, { size: 18, color: '#fff', weight: 700 });
+    const kr = { x: x + w - 62, y: y + 9, w: 46, h: h - 18 };
+    R.roundRect(ctx, kr.x, kr.y, kr.w, kr.h, kr.h / 2); ctx.fillStyle = on ? '#ffd76a' : 'rgba(255,255,255,.2)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(kr.x + (on ? kr.w - kr.h / 2 : kr.h / 2), kr.y + kr.h / 2, kr.h / 2 - 3, 0, Math.PI * 2);
+    ctx.fillStyle = on ? '#241a06' : '#888'; ctx.fill();
+    this.buttons.push({ r: { x, y, w, h }, fn: () => fn(!on) });
+  }
+  /* 结算 */
+  drawResult(ctx) {
+    const W = this.W, H = this.H, res = this.result || { win: false, stars: 0, payload: {} };
+    const t = this.sceneT;
+    this.drawBg(ctx, H * 0.78);
+    ctx.fillStyle = 'rgba(6,8,16,.62)'; ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W * 0.56, 620), ph = Math.min(H * 0.78, 640);
+    const px = W / 2 - pw / 2, py = H / 2 - ph / 2 + 10;
+    const pop = R.entering(t, 0.4);
+    ctx.save(); ctx.translate(W / 2, py + ph / 2); ctx.scale(0.9 + pop * 0.1, 0.9 + pop * 0.1); ctx.translate(-W / 2, -(py + ph / 2));
+    R.panel(ctx, px, py, pw, ph, { fill: 'rgba(22,26,46,.97)', stroke: res.win ? 'rgba(255,215,106,.5)' : 'rgba(255,93,93,.4)', r: 26, shadowBlur: 32 });
+    R.text(ctx, res.win ? '通关！' : '再战一次', W / 2, py + 62, { size: 42, align: 'center', color: res.win ? '#ffd76a' : '#ff8a8a', stroke: 'rgba(0,0,0,.5)' });
+    R.text(ctx, `第 ${this.levelId} 关`, W / 2, py + 100, { size: 18, align: 'center', color: 'rgba(255,255,255,.55)' });
+    for (let i = 0; i < 3; i++) {
+      const st = res.win && i < res.stars;
+      const delay = 0.35 + i * 0.16;
+      const k = clamp((t - delay) / 0.3, 0, 1);
+      if (k <= 0) continue;
+      ctx.save(); ctx.translate(W / 2 + (i - 1) * 74, py + 170); ctx.scale(0.4 + k * 0.9, 0.4 + k * 0.9); ctx.globalAlpha = k;
+      R.star(ctx, 0, 0, 30, st, { c1: '#fff3b0', c2: '#ffb52e' });
+      ctx.restore();
+    }
+    const p = res.payload || {};
+    const rows = [
+      ['得分', fmt(p.score || 0)],
+      [this.content.resultKillLabel || '击杀', fmt(p.kills || 0)],
+      ['用时', fmtTime(p.time || this.sceneT)],
+    ];
+    rows.forEach(([k1, v], i) => {
+      const y = py + 234 + i * 30;
+      R.text(ctx, k1, px + pw * 0.22, y, { size: 18, color: 'rgba(255,255,255,.55)', weight: 600 });
+      R.text(ctx, v, px + pw * 0.78, y, { size: 20, color: '#fff', align: 'right', weight: 800 });
+    });
+    const bw = pw * 0.68, bh = 62, bx = W / 2 - bw / 2;
+    let by = py + ph - 200;
+    if (res.win) {
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '下一关', () => this.nextLevel(), { size: 26 });
+      by += bh + 12;
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: 52 }, '重玩', () => this.startLevel(this.levelId), {
+        fill1: 'rgba(255,255,255,.18)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 22,
+      });
+      by += 52 + 12;
+    } else {
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh + 8 }, '再来一次', () => this.startLevel(this.levelId), { size: 26 });
+      by += bh + 20;
+    }
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: 48 }, '返回选关', () => this.go('levels'), {
+      fill1: 'rgba(255,255,255,.06)', fill2: 'rgba(255,255,255,.03)', color: 'rgba(255,255,255,.8)', stroke: 'rgba(255,255,255,.16)', size: 20,
+    });
+    ctx.restore();
+  }
+  /* 设置 */
+  drawSettings(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    R.text(ctx, '设置', W / 2, 66, { size: 38, align: 'center', color: '#fff' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const w = Math.min(W * 0.62, 620), x = W / 2 - w / 2;
+    let y = 140;
+    this.toggle(ctx, x, y, w, 62, '音乐', this.save.settings.music, (v) => { this.save.setSetting('music', v); this.audio.setMuted('music', !v); }); y += 74;
+    this.toggle(ctx, x, y, w, 62, '音效', this.save.settings.sfx, (v) => { this.save.setSetting('sfx', v); this.audio.setMuted('sfx', !v); }); y += 74;
+    this.toggle(ctx, x, y, w, 62, '震动反馈', this.save.settings.haptic, (v) => this.save.setSetting('haptic', v)); y += 90;
+    this.mkButton(ctx, { x, y, w, h: 56 }, '清除存档', () => { if (typeof confirm === 'function' && confirm('确定清空本机进度？')) { this.save.reset(); this.toast('已清除'); } }, {
+      fill1: 'rgba(255,93,93,.35)', fill2: 'rgba(200,40,60,.35)', color: '#fff', stroke: 'rgba(255,120,120,.5)', size: 22,
+    });
+    y += 76;
+    R.text(ctx, '存档只保存在本机浏览器；换设备不会同步。', W / 2, y, { size: 15, align: 'center', color: 'rgba(255,255,255,.45)', weight: 500 });
+    R.text(ctx, '程序化美术 + 程序化音乐音效', W / 2, y + 26, { size: 15, align: 'center', color: 'rgba(255,255,255,.35)', weight: 500 });
+  }
+  /* 说明 */
+  drawHowto(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    R.text(ctx, '玩法说明', W / 2, 66, { size: 38, align: 'center', color: '#fff' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const help = this.content.help || {};
+    const w = Math.min(W * 0.74, 820), x = W / 2 - w / 2;
+    R.panel(ctx, x, 116, w, H - 168, { r: 20, fill: 'rgba(255,255,255,.055)', stroke: 'rgba(255,255,255,.12)', shadow: false });
+    let y = 152;
+    R.text(ctx, '目标', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of wrapLines(ctx, help.goal || '', w - 56, 18)) { R.text(ctx, line, x + 28, y, { size: 18, color: '#fff', weight: 600 }); y += 28; }
+    y += 14;
+    R.text(ctx, '操作', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of help.controls || []) { R.text(ctx, '· ' + line, x + 28, y, { size: 17, color: 'rgba(255,255,255,.85)', weight: 600 }); y += 28; }
+    y += 14;
+    R.text(ctx, '小提示', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of help.tips || []) {
+      for (const l2 of wrapLines(ctx, '· ' + line, w - 56, 17)) { R.text(ctx, l2, x + 28, y, { size: 17, color: 'rgba(255,255,255,.7)', weight: 500 }); y += 26; }
+    }
+  }
+  drawToasts(ctx) {
+    const W = this.W;
+    this.toasts.forEach((tt, i) => {
+      const k = tt.life / tt.max;
+      const a = k < 0.15 ? k / 0.15 : k > 0.75 ? (1 - k) / 0.25 : 1;
+      ctx.globalAlpha = Math.max(0, Math.min(1, a));
+      const w = Math.min(W * 0.6, R.measure(ctx, tt.msg, 20, 700) + 56);
+      const y = this.H * 0.2 + i * 52;
+      R.panel(ctx, W / 2 - w / 2, y, w, 44, { r: 22, fill: 'rgba(10,14,24,.86)', stroke: 'rgba(255,215,106,.35)', shadowBlur: 8 });
+      R.text(ctx, tt.msg, W / 2, y + 22, { size: 19, align: 'center', color: '#ffe9b0', weight: 700 });
+      ctx.globalAlpha = 1;
+    });
+  }
+}
+
+function wrapLines(ctx, str, maxW, size) {
+  const out = [];
+  let line = '';
+  for (const ch of String(str)) {
+    const test = line + ch;
+    if (R.measure(ctx, test, size, 600) > maxW && line) { out.push(line); line = ch; }
+    else line = test;
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+return { App };
+})();
+__m["js/content.js"] = (function(){
+/* =========================================================================
+ * content.js —— 全部玩法内容数据（由「游戏工坊」生成，可直接手改）
+ * 主题：海底打捞 · 基因：hook · 关卡：24
+ * 改完运行：node tools/build-single.mjs && node tools/check.mjs
+ * ========================================================================= */
+
+const CONTENT = {
+  "slug": "hook",
+  "genre": "hook",
+  "title": "深海打捞",
+  "subtitle": "海底打捞 · 深海机师的冒险",
+  "tagline": "摆钩抓宝，越重越慢；限时达标，升级钩爪。",
+  "orientation": "portrait",
+  "config": {
+    "seed": 2630291758,
+    "maxLevel": 24
+  },
+  "theme": {
+    "id": "ocean",
+    "name": "海底打捞",
+    "mood": "underwater",
+    "keywords": [
+      "海底",
+      "海洋",
+      "打捞",
+      "深海",
+      "鱼",
+      "潜水",
+      "海盗",
+      "宝藏",
+      "渔",
+      "ocean",
+      "sea",
+      "fish",
+      "dive",
+      "treasure"
+    ],
+    "palette": {
+      "sky": [
+        "#062a3a",
+        "#0c5a6e"
+      ],
+      "ground": "#0a3a4a",
+      "groundDark": "#04202b",
+      "accent": "#5ce1e6",
+      "accent2": "#ffd166",
+      "hero": "#bff3ff",
+      "hero2": "#3f8fa8",
+      "enemy": "#ff8a6a",
+      "enemy2": "#7a3040",
+      "gold": "#ffe066",
+      "danger": "#ff5d5d",
+      "ok": "#6ff0c0",
+      "ui": "rgba(6,30,42,.86)",
+      "ui2": "rgba(140,240,255,.14)",
+      "ink": "#041a22",
+      "text": "#ffffff"
+    },
+    "music": {
+      "root": -10,
+      "scale": [
+        0,
+        3,
+        5,
+        7,
+        10
+      ],
+      "tempo": 72
+    },
+    "vocab": {
+      "hero": [
+        "潜水员",
+        "渔夫",
+        "船长",
+        "水手",
+        "深海机师",
+        "打捞员"
+      ],
+      "enemy": [
+        "电鳗",
+        "鲨鱼",
+        "章鱼",
+        "水母群",
+        "螃蟹怪",
+        "海盗"
+      ],
+      "boss": [
+        "巨型章鱼",
+        "幽灵船主",
+        "深海巨鲨",
+        "海妖"
+      ],
+      "building": [
+        "木筏",
+        "渔网",
+        "氧气站",
+        "打捞机",
+        "灯塔",
+        "船坞"
+      ],
+      "item": [
+        "珍珠",
+        "珊瑚",
+        "金锭",
+        "旧瓶",
+        "海星",
+        "破罐",
+        "宝石",
+        "鱼干"
+      ],
+      "place": [
+        "浅滩",
+        "珊瑚海",
+        "沉船区",
+        "深海沟",
+        "漩涡",
+        "幽灵湾"
+      ],
+      "power": [
+        "声呐",
+        "渔网",
+        "氧气补给",
+        "探照灯",
+        "鱼群",
+        "深海炸弹"
+      ],
+      "currency": "金币"
+    }
+  },
+  "chapters": [
+    {
+      "name": "浅滩",
+      "levels": [
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    {
+      "name": "珊瑚海",
+      "levels": [
+        5,
+        6,
+        7,
+        8
+      ]
+    },
+    {
+      "name": "沉船区",
+      "levels": [
+        9,
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "name": "深海沟",
+      "levels": [
+        13,
+        14,
+        15,
+        16
+      ]
+    },
+    {
+      "name": "漩涡",
+      "levels": [
+        17,
+        18,
+        19,
+        20
+      ]
+    },
+    {
+      "name": "幽灵湾",
+      "levels": [
+        21,
+        22,
+        23,
+        24
+      ]
+    }
+  ],
+  "help": {
+    "goal": "站在海底木筏上摆动钩爪，把水里的宝物抓回来。每关限时，得分达到目标分即过关；提前达标可点底部收工按钮结算，剩下的时间继续捞可以拿更高星级。",
+    "controls": [
+      "点击屏幕 / 空格：沿当前摆动方向发射钩爪",
+      "抓到宝物加分；越重的宝物回收越慢",
+      "危险物（废旧/爆裂/危险生物）会扣分，抓到爆弹还会短暂僵直",
+      "关卡开始前可以用金币升级：力度 / 绞盘 / 瞄准 / 幸运"
+    ],
+    "tips": [
+      "摆到目标正上方再出手，斜着打绳子更长、回得更慢",
+      "先把目标分稳住，再用富余时间捞重宝冲三星",
+      "重宝在深水（画面更上方），要留足回收时间"
+    ]
+  },
+  "defs": {
+    "items": [
+      {
+        "id": "i0",
+        "name": "珍珠",
+        "tier": 0,
+        "tag": "轻",
+        "value": 26,
+        "weight": 0.5,
+        "r": 20,
+        "shape": "coin",
+        "color": "gold"
+      },
+      {
+        "id": "i1",
+        "name": "珊瑚",
+        "tier": 0,
+        "tag": "轻",
+        "value": 26,
+        "weight": 0.5,
+        "r": 20,
+        "shape": "crystal",
+        "color": "gold"
+      },
+      {
+        "id": "i2",
+        "name": "金锭",
+        "tier": 1,
+        "tag": "中",
+        "value": 68,
+        "weight": 1.1,
+        "r": 23,
+        "shape": "gem",
+        "color": "accent"
+      },
+      {
+        "id": "i3",
+        "name": "旧瓶",
+        "tier": 1,
+        "tag": "中",
+        "value": 68,
+        "weight": 1.1,
+        "r": 23,
+        "shape": "pearl",
+        "color": "accent"
+      },
+      {
+        "id": "i4",
+        "name": "海星",
+        "tier": 2,
+        "tag": "重",
+        "value": 165,
+        "weight": 2,
+        "r": 27,
+        "shape": "urn",
+        "color": "hero"
+      },
+      {
+        "id": "i5",
+        "name": "破罐",
+        "tier": 2,
+        "tag": "重",
+        "value": 165,
+        "weight": 2,
+        "r": 27,
+        "shape": "chest",
+        "color": "hero"
+      },
+      {
+        "id": "i6",
+        "name": "宝石",
+        "tier": 2,
+        "tag": "重",
+        "value": 165,
+        "weight": 2,
+        "r": 27,
+        "shape": "urn",
+        "color": "hero"
+      },
+      {
+        "id": "i7",
+        "name": "鱼干",
+        "tier": 3,
+        "tag": "珍",
+        "value": 380,
+        "weight": 2.4,
+        "r": 31,
+        "shape": "orb",
+        "color": "ok"
+      }
+    ],
+    "hazards": [
+      {
+        "id": "j0",
+        "name": "废旧珍珠",
+        "kind": "junk",
+        "value": -12,
+        "weight": 1.5,
+        "r": 21,
+        "shape": "rubble",
+        "color": "ground"
+      },
+      {
+        "id": "j1",
+        "name": "废旧旧瓶",
+        "kind": "junk",
+        "value": -16,
+        "weight": 1.6,
+        "r": 21,
+        "shape": "rubble",
+        "color": "ground"
+      },
+      {
+        "id": "b0",
+        "name": "爆裂金锭",
+        "kind": "bomb",
+        "value": -78,
+        "weight": 2,
+        "r": 25,
+        "shape": "bomb",
+        "color": "danger"
+      },
+      {
+        "id": "b1",
+        "name": "爆裂破罐",
+        "kind": "bomb",
+        "value": -92,
+        "weight": 2.2,
+        "r": 25,
+        "shape": "bomb",
+        "color": "danger"
+      },
+      {
+        "id": "c0",
+        "name": "电鳗",
+        "kind": "beast",
+        "value": -58,
+        "weight": 1.7,
+        "r": 24,
+        "shape": "spike",
+        "color": "enemy"
+      },
+      {
+        "id": "c1",
+        "name": "鲨鱼",
+        "kind": "beast",
+        "value": -66,
+        "weight": 1.8,
+        "r": 24,
+        "shape": "spike",
+        "color": "enemy"
+      }
+    ],
+    "upgrades": [
+      {
+        "id": "power",
+        "name": "钩爪力度",
+        "desc": "发射更快，重物拉得更省力",
+        "base": 90,
+        "growth": 1.6,
+        "max": 5,
+        "color": "accent2",
+        "costUnit": "金币"
+      },
+      {
+        "id": "reel",
+        "name": "回收绞盘",
+        "desc": "收绳更快，每趟更省时间",
+        "base": 80,
+        "growth": 1.6,
+        "max": 5,
+        "color": "hero",
+        "costUnit": "金币"
+      },
+      {
+        "id": "aim",
+        "name": "瞄准精度",
+        "desc": "摆钩更稳，发射带轻微吸附",
+        "base": 100,
+        "growth": 1.6,
+        "max": 5,
+        "color": "ok",
+        "costUnit": "金币"
+      },
+      {
+        "id": "luck",
+        "name": "潮汐幸运",
+        "desc": "稀有宝物出现概率提升",
+        "base": 120,
+        "growth": 1.6,
+        "max": 5,
+        "color": "gold",
+        "costUnit": "金币"
+      }
+    ],
+    "economy": {
+      "startCoins": 160,
+      "winBase": 34,
+      "winPerLevel": 5,
+      "starBonus": 16,
+      "scoreCoins": 0.02
+    },
+    "tiers": [
+      {
+        "tier": 0,
+        "tag": "轻",
+        "value": 26,
+        "weight": 0.5,
+        "r": 20
+      },
+      {
+        "tier": 1,
+        "tag": "中",
+        "value": 68,
+        "weight": 1.1,
+        "r": 23
+      },
+      {
+        "tier": 2,
+        "tag": "重",
+        "value": 165,
+        "weight": 2,
+        "r": 27
+      },
+      {
+        "tier": 3,
+        "tag": "珍",
+        "value": 380,
+        "weight": 2.4,
+        "r": 31
+      }
+    ]
+  },
+  "levels": [
+    {
+      "id": 1,
+      "chapter": 1,
+      "name": "浅滩·宝石",
+      "sec": 62,
+      "target": 1090,
+      "star2": 1450,
+      "star3": 1730,
+      "items": 32,
+      "tiers": [
+        0.52,
+        0.3,
+        0.14,
+        0.04
+      ],
+      "hazard": 0.13,
+      "bomb": 0.34,
+      "valueScale": 1,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 2,
+      "chapter": 1,
+      "name": "浅滩·鱼干",
+      "sec": 64,
+      "target": 1170,
+      "star2": 1560,
+      "star3": 1860,
+      "items": 33,
+      "tiers": [
+        0.512,
+        0.3,
+        0.145,
+        0.043
+      ],
+      "hazard": 0.136,
+      "bomb": 0.347,
+      "valueScale": 1.024,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 3,
+      "chapter": 1,
+      "name": "浅滩·珍珠",
+      "sec": 66,
+      "target": 1230,
+      "star2": 1630,
+      "star3": 1940,
+      "items": 33,
+      "tiers": [
+        0.503,
+        0.3,
+        0.15,
+        0.047
+      ],
+      "hazard": 0.141,
+      "bomb": 0.354,
+      "valueScale": 1.048,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 4,
+      "chapter": 1,
+      "name": "浅滩·珊瑚",
+      "sec": 67,
+      "target": 1350,
+      "star2": 1660,
+      "star3": 1980,
+      "items": 34,
+      "tiers": [
+        0.495,
+        0.3,
+        0.154,
+        0.05
+      ],
+      "hazard": 0.187,
+      "bomb": 0.361,
+      "valueScale": 1.072,
+      "hard": true,
+      "boss": true
+    },
+    {
+      "id": 5,
+      "chapter": 2,
+      "name": "珊瑚海·金锭",
+      "sec": 69,
+      "target": 1390,
+      "star2": 1810,
+      "star3": 2170,
+      "items": 34,
+      "tiers": [
+        0.487,
+        0.3,
+        0.159,
+        0.054
+      ],
+      "hazard": 0.153,
+      "bomb": 0.368,
+      "valueScale": 1.096,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 6,
+      "chapter": 2,
+      "name": "珊瑚海·旧瓶",
+      "sec": 71,
+      "target": 1490,
+      "star2": 1940,
+      "star3": 2320,
+      "items": 35,
+      "tiers": [
+        0.479,
+        0.3,
+        0.164,
+        0.057
+      ],
+      "hazard": 0.158,
+      "bomb": 0.375,
+      "valueScale": 1.12,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 7,
+      "chapter": 2,
+      "name": "珊瑚海·海星",
+      "sec": 73,
+      "target": 1600,
+      "star2": 2070,
+      "star3": 2480,
+      "items": 36,
+      "tiers": [
+        0.47,
+        0.3,
+        0.169,
+        0.061
+      ],
+      "hazard": 0.164,
+      "bomb": 0.382,
+      "valueScale": 1.143,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 8,
+      "chapter": 2,
+      "name": "珊瑚海·破罐",
+      "sec": 75,
+      "target": 1690,
+      "star2": 2040,
+      "star3": 2430,
+      "items": 36,
+      "tiers": [
+        0.462,
+        0.3,
+        0.173,
+        0.064
+      ],
+      "hazard": 0.21,
+      "bomb": 0.389,
+      "valueScale": 1.167,
+      "hard": true,
+      "boss": true
+    },
+    {
+      "id": 9,
+      "chapter": 3,
+      "name": "沉船区·宝石",
+      "sec": 76,
+      "target": 1780,
+      "star2": 2290,
+      "star3": 2730,
+      "items": 37,
+      "tiers": [
+        0.454,
+        0.3,
+        0.178,
+        0.068
+      ],
+      "hazard": 0.175,
+      "bomb": 0.396,
+      "valueScale": 1.191,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 10,
+      "chapter": 3,
+      "name": "沉船区·鱼干",
+      "sec": 78,
+      "target": 1850,
+      "star2": 2360,
+      "star3": 2820,
+      "items": 37,
+      "tiers": [
+        0.446,
+        0.3,
+        0.183,
+        0.071
+      ],
+      "hazard": 0.181,
+      "bomb": 0.403,
+      "valueScale": 1.215,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 11,
+      "chapter": 3,
+      "name": "沉船区·珍珠",
+      "sec": 80,
+      "target": 1980,
+      "star2": 2520,
+      "star3": 3000,
+      "items": 38,
+      "tiers": [
+        0.437,
+        0.3,
+        0.188,
+        0.075
+      ],
+      "hazard": 0.187,
+      "bomb": 0.41,
+      "valueScale": 1.239,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 12,
+      "chapter": 3,
+      "name": "沉船区·珊瑚",
+      "sec": 82,
+      "target": 2140,
+      "star2": 2530,
+      "star3": 3030,
+      "items": 39,
+      "tiers": [
+        0.429,
+        0.3,
+        0.193,
+        0.078
+      ],
+      "hazard": 0.232,
+      "bomb": 0.417,
+      "valueScale": 1.263,
+      "hard": true,
+      "boss": true
+    },
+    {
+      "id": 13,
+      "chapter": 4,
+      "name": "深海沟·金锭",
+      "sec": 84,
+      "target": 2190,
+      "star2": 2750,
+      "star3": 3290,
+      "items": 39,
+      "tiers": [
+        0.421,
+        0.3,
+        0.197,
+        0.082
+      ],
+      "hazard": 0.198,
+      "bomb": 0.423,
+      "valueScale": 1.287,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 14,
+      "chapter": 4,
+      "name": "深海沟·旧瓶",
+      "sec": 85,
+      "target": 2320,
+      "star2": 2910,
+      "star3": 3480,
+      "items": 40,
+      "tiers": [
+        0.413,
+        0.3,
+        0.202,
+        0.085
+      ],
+      "hazard": 0.203,
+      "bomb": 0.43,
+      "valueScale": 1.311,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 15,
+      "chapter": 4,
+      "name": "深海沟·海星",
+      "sec": 87,
+      "target": 2470,
+      "star2": 3080,
+      "star3": 3680,
+      "items": 41,
+      "tiers": [
+        0.404,
+        0.3,
+        0.207,
+        0.089
+      ],
+      "hazard": 0.209,
+      "bomb": 0.437,
+      "valueScale": 1.335,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 16,
+      "chapter": 4,
+      "name": "深海沟·破罐",
+      "sec": 89,
+      "target": 2590,
+      "star2": 3010,
+      "star3": 3590,
+      "items": 41,
+      "tiers": [
+        0.396,
+        0.3,
+        0.212,
+        0.092
+      ],
+      "hazard": 0.255,
+      "bomb": 0.444,
+      "valueScale": 1.359,
+      "hard": true,
+      "boss": true
+    },
+    {
+      "id": 17,
+      "chapter": 5,
+      "name": "漩涡·宝石",
+      "sec": 91,
+      "target": 2710,
+      "star2": 3350,
+      "star3": 4000,
+      "items": 42,
+      "tiers": [
+        0.388,
+        0.3,
+        0.217,
+        0.096
+      ],
+      "hazard": 0.22,
+      "bomb": 0.451,
+      "valueScale": 1.383,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 18,
+      "chapter": 5,
+      "name": "漩涡·鱼干",
+      "sec": 93,
+      "target": 2790,
+      "star2": 3440,
+      "star3": 4110,
+      "items": 42,
+      "tiers": [
+        0.38,
+        0.3,
+        0.221,
+        0.099
+      ],
+      "hazard": 0.226,
+      "bomb": 0.458,
+      "valueScale": 1.407,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 19,
+      "chapter": 5,
+      "name": "漩涡·珍珠",
+      "sec": 94,
+      "target": 2950,
+      "star2": 3620,
+      "star3": 4320,
+      "items": 43,
+      "tiers": [
+        0.371,
+        0.3,
+        0.226,
+        0.103
+      ],
+      "hazard": 0.232,
+      "bomb": 0.465,
+      "valueScale": 1.43,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 20,
+      "chapter": 5,
+      "name": "漩涡·珊瑚",
+      "sec": 96,
+      "target": 3150,
+      "star2": 3600,
+      "star3": 4310,
+      "items": 44,
+      "tiers": [
+        0.363,
+        0.3,
+        0.231,
+        0.106
+      ],
+      "hazard": 0.277,
+      "bomb": 0.472,
+      "valueScale": 1.454,
+      "hard": true,
+      "boss": true
+    },
+    {
+      "id": 21,
+      "chapter": 6,
+      "name": "幽灵湾·金锭",
+      "sec": 98,
+      "target": 3220,
+      "star2": 3910,
+      "star3": 4670,
+      "items": 44,
+      "tiers": [
+        0.355,
+        0.3,
+        0.236,
+        0.11
+      ],
+      "hazard": 0.243,
+      "bomb": 0.479,
+      "valueScale": 1.478,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 22,
+      "chapter": 6,
+      "name": "幽灵湾·旧瓶",
+      "sec": 100,
+      "target": 3380,
+      "star2": 4090,
+      "star3": 4890,
+      "items": 45,
+      "tiers": [
+        0.347,
+        0.3,
+        0.24,
+        0.113
+      ],
+      "hazard": 0.249,
+      "bomb": 0.486,
+      "valueScale": 1.502,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 23,
+      "chapter": 6,
+      "name": "幽灵湾·海星",
+      "sec": 102,
+      "target": 3490,
+      "star2": 4210,
+      "star3": 5030,
+      "items": 45,
+      "tiers": [
+        0.338,
+        0.3,
+        0.245,
+        0.117
+      ],
+      "hazard": 0.254,
+      "bomb": 0.493,
+      "valueScale": 1.526,
+      "hard": false,
+      "boss": false
+    },
+    {
+      "id": 24,
+      "chapter": 6,
+      "name": "幽灵湾·破罐",
+      "sec": 103,
+      "target": 3700,
+      "star2": 4160,
+      "star3": 4970,
+      "items": 46,
+      "tiers": [
+        0.33,
+        0.3,
+        0.25,
+        0.12
+      ],
+      "hazard": 0.3,
+      "bomb": 0.5,
+      "valueScale": 1.55,
+      "hard": true,
+      "boss": true
+    }
+  ],
+  "resultKillLabel": "捞取",
+  "saveDefaults": {
+    "coins": 160,
+    "upgrades": {
+      "power": 0,
+      "reel": 0,
+      "aim": 0,
+      "luck": 0
+    }
+  }
+};
+
+return { CONTENT };
+})();
+__m["js/rules/hook.js"] = (function(){
+/* =========================================================================
+ * rules/hook.js —— 「钩爪打捞」：摆动钩爪 / 抓宝避雷 / 限时达标 / 关卡间升级
+ *
+ * 场地：竖屏 720x1280。海底木筏在画面下方，绞盘吊臂在木筏中央；钩爪以吊臂为
+ * 圆心来回摆动，点击沿当前摆动方向发射，抓到物件后回收。越重回收越慢。
+ * 纯逻辑：update()/bot() 只用 svc.rng，不碰 DOM，可在 Node 里无头仿真。
+ * ========================================================================= */
+const { clamp, dist, fmt, fmtTime } = __m["js/core.js"];
+
+const { panel, text, button, bar, roundRect } = __m["js/render.js"];
+
+
+const TAU = Math.PI * 2;
+
+function createRule(svc) {
+  const { content, level, W, H, audio, fx } = svc;
+  const art = svc.art;
+  const P = (content.theme && content.theme.palette) || {};
+  const D = content.defs;
+  const rng = svc.rng;
+  const S = svc.save && svc.save.data ? svc.save : null;
+  const unit = (D.economy && D.economy.costUnit) || (content.theme && content.theme.vocab && content.theme.vocab.currency) || '金币';
+
+  /* ----------------------- 调色板（全部来自 theme.palette） ----------------------- */
+  const C = {
+    gold: P.gold || '#ffd76a', accent: P.accent || '#5ce1ff', accent2: P.accent2 || '#ffb36b',
+    hero: P.hero || '#9fe8ff', hero2: P.hero2 || '#3f8fb8', ok: P.ok || '#5cffb0',
+    danger: P.danger || '#ff6b6b', enemy: P.enemy || '#7fd6c1', enemy2: P.enemy2 || '#2b6d66',
+    ground: P.ground || '#2a4a56', groundDark: P.groundDark || '#12262f',
+    ink: P.ink || '#04121c', ui: P.ui || 'rgba(6,22,32,.86)', ui2: P.ui2 || 'rgba(150,230,255,.14)',
+    sky: Array.isArray(P.sky) && P.sky.length >= 2 ? P.sky : ['#0a3a4d', '#062033'],
+  };
+  const col = (k) => C[k] || C.gold;
+
+  /* ----------------------- 场地常量 ----------------------- */
+  const PIVOT = { x: W / 2, y: Math.round(H * 0.79) };    // 绞盘吊臂（钩爪圆心）
+  const DECK_Y = Math.round(H * 0.815);                   // 木筏甲板
+  const SAND_Y = Math.round(H * 0.9);                     // 海床
+  const SURFACE_Y = Math.round(H * 0.07);                 // 水面
+  const X0 = 66, X1 = W - 66;                             // 物件横向范围
+  const Y0 = Math.round(H * 0.168), Y1 = PIVOT.y - 106;   // 物件纵向范围
+  const SWING_AMP = 0.88;
+  const ROPE_BASE = 900;
+
+  const state = {
+    phase: 'shop', shopT: 0, time: 0, left: level.sec,
+    score: 0, grabs: 0, shots: 0, stun: 0,
+    phaseA: -Math.PI / 2,
+    coins: S ? (S.data.coins || 0) : 0,
+    up: { power: 0, reel: 0, aim: 0, luck: 0 },
+    warnNext: 10, reached: false,
+  };
+  const hook = { state: 'swing', a: 0, len: 0, spd: 0, item: null };
+  const items = [];
+
+  /* ----------------------- 升级数值 ----------------------- */
+  const up = (k) => state.up[k] | 0;
+  const defUp = (k) => D.upgrades.find((u) => u.id === k) || D.upgrades[0];
+  const costOf = (u, lv) => Math.round(u.base * Math.pow(u.growth, lv));
+  const maxRope = () => Math.min(1080, ROPE_BASE + 26 * up('power'));
+  const fireSpeed = () => 1240 + 95 * up('power');
+  const swingSpeed = () => 1.55 - 0.06 * up('aim');
+  const aimSnap = () => 0.06 + 0.02 * up('aim');
+  function retractSpeed(it) {
+    const base = 760 * (1 + 0.17 * up('reel'));
+    if (!it) return base;
+    const wf = 0.4 * Math.max(0.3, 1 - 0.13 * up('power'));
+    return base / (1 + it.weight * wf);
+  }
+  const coins = () => (S ? (S.data.coins || 0) : state.coins);
+  function spend(n) {
+    if (coins() < n) return false;
+    if (S) { S.data.coins = Math.max(0, (S.data.coins || 0) - n); S.flush(); }
+    else state.coins = Math.max(0, state.coins - n);
+    return true;
+  }
+
+  /* ----------------------- 小工具 ----------------------- */
+  function fade(input, a) {
+    const s = String(input || '');
+    if (s[0] !== '#') return s;
+    let h = s.slice(1);
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    if (h.length < 6) return s;
+    const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${clamp(a, 0, 1).toFixed(3)})`;
+  }
+  const inRect = (x, y, r) => !!r && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+  function angDiff(a, b) {
+    let d = a - b;
+    while (d > Math.PI) d -= TAU;
+    while (d < -Math.PI) d += TAU;
+    return d;
+  }
+  function tipPos() {
+    return { x: PIVOT.x + Math.sin(hook.a) * hook.len, y: PIVOT.y - Math.cos(hook.a) * hook.len };
+  }
+
+  /* ----------------------- 物件生成 ----------------------- */
+  /* 分层抽取：保证每关的档位数量与设计一致（稀有宝物真的会出现），
+   * 再用 rng 洗牌决定顺序 → 关卡总量稳定、每局布局又不同。 */
+  function makeDeck() {
+    const total = level.items || 30;
+    const hazN = clamp(Math.round(total * (level.hazard || 0.15)), 2, total - 6);
+    const posN = total - hazN;
+    const p = level.tiers || [0.52, 0.3, 0.14, 0.04];
+    const luck = up('luck');
+    // 幸运只改变"档位比例"，整体仍是 posN 个物件（按比例归一化，不会凭空变多）
+    const w = [p[0], p[1], p[2] * (1 + 0.1 * luck), p[3] * (1 + 0.22 * luck)];
+    const wsum = w[0] + w[1] + w[2] + w[3] || 1;
+    const n3 = Math.round(posN * (w[3] / wsum));
+    const n2 = Math.round(posN * (w[2] / wsum));
+    const n1 = Math.round(posN * (w[1] / wsum));
+    const n0 = Math.max(0, posN - n1 - n2 - n3);
+    const list = [];
+    for (let t = 0; t < 4; t++) {
+      const n = [n0, n1, n2, n3][t];
+      for (let i = 0; i < n; i++) list.push({ tier: t });
+    }
+    const bombN = Math.round(hazN * (level.bomb || 0.4));
+    const junkN = Math.round((hazN - bombN) * 0.45);
+    const beastN = hazN - bombN - junkN;
+    for (let i = 0; i < bombN; i++) list.push({ hazard: 'bomb' });
+    for (let i = 0; i < junkN; i++) list.push({ hazard: 'junk' });
+    for (let i = 0; i < beastN; i++) list.push({ hazard: 'beast' });
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = (rng.next() * (i + 1)) | 0;
+      const t = list[i]; list[i] = list[j]; list[j] = t;
+    }
+    return list;
+  }
+  const SHAPES = [['coin', 'crystal', 'shell'], ['gem', 'pearl'], ['urn', 'chest'], ['crown', 'orb']];
+  function placeItems() {
+    const deck = makeDeck();
+    const seen = [0, 0, 0, 0];
+    const defs = deck.map((e) => {
+      if (e.hazard) {
+        const pool = D.hazards.filter((h) => h.kind === e.hazard);
+        return rng.pick(pool.length ? pool : D.hazards);
+      }
+      const pool = D.items.filter((d) => d.tier === e.tier);
+      const base = rng.pick(pool.length ? pool : D.items);
+      const shapes = SHAPES[e.tier] || ['coin'];
+      return { ...base, shape: shapes[(seen[e.tier]++) % shapes.length] };
+    });
+    const limit = 872;                              // 基础绳长内可及（留余量）
+    for (let i = 0; i < defs.length; i++) {
+      const def = defs[i];
+      let x = PIVOT.x, y = Y0 + 40, ok = false;
+      for (let tr = 0; tr < 150 && !ok; tr++) {
+        x = rng.range(X0 + def.r * 0.5, X1 - def.r * 0.5);
+        y = rng.range(Y0 + def.r * 0.5, Y1);
+        const d = dist(x, y, PIVOT.x, PIVOT.y);
+        if (d > limit || d < 148) continue;
+        if (Math.abs(Math.atan2(x - PIVOT.x, PIVOT.y - y)) > 0.72) continue;   // 落在摆钩可及角度内
+        if (def.tier === 3 && y > PIVOT.y - 320) continue;     // 稀有宝更靠深水
+        let bad = false;
+        for (let k = 0; k < items.length; k++) {
+          const o = items[k];
+          if (dist(x, y, o.x, o.y) < o.r + def.r + 11) { bad = true; break; }
+        }
+        if (bad) continue;
+        ok = true; break;
+      }
+      if (!ok) { x = clamp(x, X0 + 20, X1 - 20); y = clamp(y, Y0 + 20, Y1 - 20); }
+      items.push({
+        id: def.id, name: def.name, kind: def.kind || 'treasure', tier: def.tier == null ? 0 : def.tier,
+        shape: def.shape, color: def.color, r: def.r, weight: def.weight,
+        value: def.value, val: Math.round(def.value > 0 ? def.value * (level.valueScale || 1) : def.value),
+        x, y, grabbed: false, bob: rng.range(0, TAU),
+      });
+    }
+  }
+
+  /* ----------------------- 动作 ----------------------- */
+  function buy(id) {
+    const u = defUp(id), lv = up(id);
+    if (!u) return false;
+    if (lv >= u.max) { svc.toast?.('已经满级'); return false; }
+    const cost = costOf(u, lv);
+    if (!spend(cost)) { svc.toast?.(`${unit}不足（需要 ${cost}）`); audio.sfx('warn'); return false; }
+    state.up[id] = lv + 1;
+    if (S) { S.data.upgrades = S.data.upgrades || {}; S.data.upgrades[id] = lv + 1; S.flush(); }
+    audio.sfx('upgrade');
+    const i = D.upgrades.findIndex((q) => q.id === id);
+    const y = 356 + i * 110 + 50;
+    fx.burst(104, y, 14, { color: col(u.color), up: 40, speed: 170 });
+    fx.text(360, y - 34, u.name + ' Lv.' + (lv + 1), col(u.color), 20);
+    return true;
+  }
+  function startPlay() {
+    if (state.phase !== 'shop') return;
+    state.phase = 'play';
+    state.time = 0;
+    state.left = level.sec;
+    audio.sfx('click');
+    fx.ring(PIVOT.x, PIVOT.y, col('accent'), 10, { grow: 220, max: 0.5 });
+    if (level.id <= 2) svc.toast?.('点击屏幕发射钩爪');
+  }
+  function fire() {
+    if (state.phase !== 'play' || rule.status !== 'playing') return false;
+    if (hook.state !== 'swing' || state.stun > 0) return false;
+    // 瞄准吸附：把钩爪轻推到最近的物件方向
+    let snapAng = null, bestD = aimSnap();
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.grabbed || it.val <= 0) continue;         // 吸附只帮忙对宝物，不会吸到危险物
+      const ang = Math.atan2(it.x - PIVOT.x, PIVOT.y - it.y);
+      const d = Math.abs(angDiff(ang, hook.a));
+      if (d < bestD) { bestD = d; snapAng = ang; }
+    }
+    if (snapAng != null) hook.a = snapAng;
+    hook.state = 'fire';
+    hook.len = 24;
+    hook.spd = 0;
+    state.shots++;
+    audio.sfx('arrow');
+    fx.burst(PIVOT.x, PIVOT.y, 5, { color: col('hero'), speed: 90, up: 20 });
+    return true;
+  }
+  function grab(it) {
+    it.grabbed = true;
+    hook.item = it;
+    hook.spd = retractSpeed(it);
+    hook.state = 'reel';
+    audio.sfx('pickup');
+    fx.ring(it.x, it.y, col(it.color), 8, { grow: 120, max: 0.3 });
+  }
+  function applyItem(it) {
+    const tip = tipPos(), fxX = PIVOT.x + (tip.x - PIVOT.x) * 0.35, fxY = PIVOT.y - 74;
+    const v = Math.round(it.val), big = it.tier >= 2;
+    state.grabs++;
+    if (it.kind === 'treasure') {
+      state.score += v;
+      audio.sfx('coin');
+      fx.text(fxX, fxY, '+' + fmt(v), col('gold'), big ? 28 : 22);
+      fx.burst(tip.x, tip.y, big ? 18 : 10, { color: col(it.color), up: 50, speed: 200, grav: 240 });
+      fx.ring(tip.x, tip.y, col('gold'), 9, { grow: big ? 260 : 160, max: 0.4 });
+      if (big) {
+        fx.shake(it.tier >= 3 ? 6 : 3); fx.flash(it.tier >= 3 ? 0.18 : 0.08);
+        fx.text(tip.x, tip.y - 36, it.name, col('ok'), 18, { max: 0.8 });
+      }
+    } else if (it.kind === 'bomb') {
+      state.score = Math.max(0, state.score + v);
+      state.stun = 0.85;
+      fx.shake(15); fx.flash(0.35);
+      fx.burst(tip.x, tip.y, 26, { color: col('danger'), up: 30, speed: 330 });
+      fx.ring(tip.x, tip.y, col('danger'), 12, { grow: 460, max: 0.45 });
+      fx.text(fxX, fxY, String(v), col('danger'), 28, { max: 1.1 });
+      audio.sfx('explode');
+    } else {
+      state.score = Math.max(0, state.score + v);
+      fx.shake(3); fx.burst(tip.x, tip.y, 8, { color: col('enemy'), speed: 150 });
+      fx.text(fxX, fxY, String(v), col('danger'), 20);
+      audio.sfx('hit');
+    }
+    const i = items.indexOf(it);
+    if (i >= 0) items.splice(i, 1);
+    if (!state.reached && state.score >= level.target) {
+      state.reached = true;
+      svc.toast?.('达标！可以继续捞或点「收工」');
+      fx.flash(0.12); audio.sfx('upgrade');
+    }
+  }
+  function land() {
+    const it = hook.item;
+    hook.item = null;
+    hook.state = 'swing';
+    if (it) applyItem(it);
+  }
+  function claim() {
+    if (state.phase !== 'play' || rule.status !== 'playing') return;
+    if (state.score < level.target) { svc.toast?.('还没达标，再捞几个'); audio.sfx('warn'); return; }
+    endLevel();
+  }
+  function endLevel() {
+    if (rule.status !== 'playing') return;
+    const win = state.score >= level.target;
+    const stars = win ? (state.score >= level.star3 ? 3 : state.score >= level.star2 ? 2 : 1) : 0;
+    const eco = D.economy || { winBase: 30, winPerLevel: 5, starBonus: 15, scoreCoins: 0.02 };
+    const reward = win ? Math.round(eco.winBase + level.id * eco.winPerLevel + stars * eco.starBonus + state.score * eco.scoreCoins) : 0;
+    rule.status = win ? 'won' : 'lost';
+    state.phase = 'over';
+    hook.state = 'swing';
+    svc.finish({ stars, score: Math.round(state.score), coins: reward, kills: state.grabs, time: Math.round(state.time * 10) / 10 });
+  }
+
+  /* ----------------------- 钩爪物理 ----------------------- */
+  function hookStep(dt) {
+    if (hook.state === 'fire') {
+      const step = fireSpeed() * dt;
+      const n = Math.max(1, Math.ceil(step / 13));
+      for (let i = 0; i < n; i++) {
+        hook.len += step / n;
+        if (hook.len >= maxRope()) {
+          hook.len = maxRope();
+          hook.state = 'reel';
+          hook.spd = retractSpeed(null);
+          hook.item = null;
+          break;
+        }
+        const tip = tipPos();
+        let hit = null;
+        for (let k = 0; k < items.length; k++) {
+          const it = items[k];
+          if (it.grabbed) continue;
+          if (dist(tip.x, tip.y, it.x, it.y) <= it.r + 10) { hit = it; break; }
+        }
+        if (hit) { grab(hit); break; }
+      }
+    } else if (hook.state === 'reel') {
+      hook.len -= hook.spd * dt;
+      if (hook.len <= 0) { hook.len = 0; land(); }
+    }
+  }
+
+  /* ----------------------- 更新 ----------------------- */
+  function update(dt) {
+    if (rule.status !== 'playing') return;
+    if (state.phase === 'shop') { state.shopT += dt; return; }
+    if (state.phase !== 'play') return;
+    state.time += dt;
+    state.left = Math.max(0, level.sec - state.time);
+    state.stun = Math.max(0, state.stun - dt);
+    if (hook.state === 'swing') {
+      state.phaseA += dt * swingSpeed();
+      hook.a = Math.sin(state.phaseA) * SWING_AMP;
+      hook.len = 24;                                   // 待发状态：钩爪停在绞盘上方
+    } else {
+      hookStep(dt);
+    }
+    if (state.left > 0 && state.left <= 10) {
+      const sec = Math.ceil(state.left);
+      if (sec < state.warnNext) {
+        state.warnNext = sec;
+        if (sec === 5 || sec === 3 || sec === 1) audio.sfx('warn');
+      }
+    }
+    if (state.left <= 0) { state.left = 0; endLevel(); }
+  }
+
+  /* ----------------------- 机器人（无头仿真） ----------------------- */
+  function botShop() {
+    const order = ['aim', 'reel', 'power', 'luck'];
+    for (let guard = 0; guard < 30; guard++) {
+      let bought = false;
+      for (const id of order) {
+        const u = defUp(id), lv = up(id);
+        if (u && lv < u.max && costOf(u, lv) <= coins()) { buy(id); bought = true; break; }
+      }
+      if (!bought) break;
+    }
+    startPlay();
+  }
+  function bot(dt) {
+    if (rule.status !== 'playing') return;
+    if (state.phase === 'shop') { botShop(); return; }
+    if (state.phase !== 'play') return;
+    // 稳一手：达标后临近结束、或者场上已经没有宝物时收工
+    if (state.score >= level.target) {
+      let posLeft = false;
+      for (let i = 0; i < items.length; i++) { if (items[i].val > 0) { posLeft = true; break; } }
+      if (!posLeft || state.left <= 7.5) { if (hook.state === 'swing') { claim(); return; } }
+    }
+    if (hook.state !== 'swing' || state.stun > 0) return;
+    const over = state.score >= level.target;
+    const rope = maxRope() * 0.97;
+    let best = null, bestRate = -1;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.grabbed) continue;
+      if (it.val <= 0) continue;                          // 从不主动抓危险物
+      if (over && it.val < 30) continue;                  // 达标后稳一手，只捞好货
+      const dx = it.x - PIVOT.x, dy = PIVOT.y - it.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d > rope) continue;
+      // 容差取"吸附角"与"物件角半径"的较小值：出手后必被吸附到物件，必定命中
+      const tol = Math.min(aimSnap() * 0.85, (it.r + 6) / d);
+      if (Math.abs(angDiff(Math.atan2(dx, dy), hook.a)) > tol) continue;
+      const t = d / fireSpeed() + d / retractSpeed(it);
+      const rate = it.val / Math.max(0.35, t);
+      if (rate > bestRate) { bestRate = rate; best = it; }
+    }
+    if (best) fire();
+  }
+
+  /* ----------------------- 绘制：水下场景 ----------------------- */
+  function drawFish(ctx, x, y, s, color) {
+    ctx.save(); ctx.translate(x, y); ctx.fillStyle = color;
+    ctx.beginPath(); ctx.ellipse(0, 0, s, s * 0.5, 0, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-s * 0.9, 0); ctx.lineTo(-s * 1.7, -s * 0.5); ctx.lineTo(-s * 1.7, s * 0.5); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  function drawWater(ctx, t) {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, C.sky[0]); g.addColorStop(0.34, C.sky[1]);
+    g.addColorStop(0.72, fade(C.ink, 0.94)); g.addColorStop(1, C.ink);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    for (let i = 0; i < 3; i++) {              // 水面波光
+      ctx.strokeStyle = fade('#ffffff', 0.12 - i * 0.03); ctx.lineWidth = 3 + i * 2;
+      ctx.beginPath();
+      for (let x = -20; x <= W + 20; x += 24) {
+        const y = SURFACE_Y + i * 9 + Math.sin(x * 0.02 + t * 1.4 + i) * 4;
+        if (x === -20) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    for (let i = 0; i < 6; i++) {              // 光柱
+      const x = W * (0.06 + i * 0.163) + Math.sin(t * 0.35 + i * 1.7) * 26;
+      const bw = 34 + (i % 3) * 26;
+      ctx.fillStyle = fade('#ffffff', 0.035 + 0.03 * Math.max(0, Math.sin(t * 0.7 + i * 2.1)));
+      ctx.beginPath();
+      ctx.moveTo(x - bw * 0.42, SURFACE_Y); ctx.lineTo(x + bw * 0.42, SURFACE_Y);
+      ctx.lineTo(x + bw * 1.75, SAND_Y); ctx.lineTo(x + bw * 0.35, SAND_Y);
+      ctx.closePath(); ctx.fill();
+    }
+    for (let i = 0; i < 26; i++) {             // 上浮气泡
+      const px = 12 + ((i * 149) % (W - 24)) + Math.sin(t * 1.4 + i) * 6;
+      const py = H - ((t * (16 + (i % 7) * 8) + i * 181) % (H * 1.02));
+      const r = 2 + (i % 4) * 1.6;
+      ctx.globalAlpha = 0.1 + (i % 5) * 0.035; ctx.fillStyle = C.hero;
+      ctx.beginPath(); ctx.arc(px, py, r, 0, TAU); ctx.fill();
+      ctx.globalAlpha = 0.22; ctx.strokeStyle = fade('#ffffff', 0.35); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(px, py, r, 0, TAU); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < 4; i++) {              // 远处游鱼剪影
+      const x = -90 + ((t * (0.016 + i * 0.007) + i * 0.27) % 1) * (W + 180);
+      drawFish(ctx, x, 300 + i * 158 + Math.sin(t * 0.7 + i * 1.9) * 16, 13 + i * 3, fade(C.enemy2, 0.26));
+    }
+  }
+  function drawSeabed(ctx, t) {
+    const g = ctx.createLinearGradient(0, SAND_Y - 60, 0, H);
+    g.addColorStop(0, fade(C.ground, 0)); g.addColorStop(0.3, C.ground); g.addColorStop(1, C.groundDark);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.moveTo(0, SAND_Y + 12);
+    for (let x = 0; x <= W; x += 36) ctx.lineTo(x, SAND_Y + Math.sin(x * 0.016) * 10 + Math.sin(x * 0.045) * 4 - 6);
+    ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath(); ctx.fill();
+    for (let i = 0; i < 5; i++) {              // 礁石
+      const rx = 60 + i * 150 + Math.sin(i * 2.3) * 20, rw = 40 + (i % 3) * 26;
+      ctx.fillStyle = fade(C.groundDark, 0.9);
+      ctx.beginPath(); ctx.ellipse(rx, SAND_Y + 22 + (i % 2) * 6, rw, rw * 0.42, 0, Math.PI, 0); ctx.fill();
+    }
+    for (let i = 0; i < 8; i++) {              // 海草
+      const gx = 42 + i * 86, hgt = 46 + (i % 4) * 30, sway = Math.sin(t * 1.1 + i * 1.3) * 12;
+      ctx.strokeStyle = fade(C.ok, 0.42); ctx.lineWidth = 5 - (i % 3); ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(gx, SAND_Y + 18);
+      ctx.quadraticCurveTo(gx + sway, SAND_Y + 18 - hgt * 0.55, gx + sway * 1.7, SAND_Y + 18 - hgt);
+      ctx.stroke();
+    }
+  }
+  function drawRaft(ctx, t) {
+    const dx = W / 2;
+    ctx.fillStyle = C.groundDark;                              // 支柱 + 斜撑
+    roundRect(ctx, dx - 100, DECK_Y + 12, 18, SAND_Y - DECK_Y + 6, 5); ctx.fill();
+    roundRect(ctx, dx + 82, DECK_Y + 12, 18, SAND_Y - DECK_Y + 6, 5); ctx.fill();
+    ctx.strokeStyle = fade(C.groundDark, 0.85); ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.moveTo(dx - 94, DECK_Y + 58); ctx.lineTo(dx + 92, SAND_Y - 26); ctx.stroke();
+    ctx.fillStyle = C.ground;                                  // 甲板
+    roundRect(ctx, dx - 116, DECK_Y, 232, 20, 9); ctx.fill();
+    ctx.fillStyle = fade('#ffffff', 0.14); roundRect(ctx, dx - 112, DECK_Y + 2, 224, 7, 4); ctx.fill();
+    ctx.strokeStyle = fade(C.ink, 0.35); ctx.lineWidth = 2;
+    for (let i = 1; i < 5; i++) { ctx.beginPath(); ctx.moveTo(dx - 112 + i * 45, DECK_Y + 1); ctx.lineTo(dx - 112 + i * 45, DECK_Y + 19); ctx.stroke(); }
+    ctx.fillStyle = fade(C.accent2, 0.75);                     // 浮桶
+    roundRect(ctx, dx - 128, DECK_Y + 6, 16, 30, 6); ctx.fill();
+    roundRect(ctx, dx + 112, DECK_Y + 6, 16, 30, 6); ctx.fill();
+    ctx.fillStyle = fade(C.ground, 0.9);                       // 吊臂立柱
+    roundRect(ctx, dx - 11, PIVOT.y, 22, DECK_Y - PIVOT.y + 12, 6); ctx.fill();
+    ctx.fillStyle = fade('#ffffff', 0.1); roundRect(ctx, dx - 7, PIVOT.y + 4, 5, DECK_Y - PIVOT.y, 2); ctx.fill();
+    const rot = t * (hook.state === 'reel' ? 5.5 : hook.state === 'fire' ? 8 : 1.1);   // 绞盘转鼓
+    ctx.save(); ctx.translate(PIVOT.x, PIVOT.y);
+    ctx.fillStyle = C.groundDark; ctx.beginPath(); ctx.arc(0, 0, 22, 0, TAU); ctx.fill();
+    ctx.strokeStyle = fade(C.accent2, 0.9); ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, 0, 22, 0, TAU); ctx.stroke();
+    ctx.rotate(rot); ctx.strokeStyle = fade(C.accent, 0.85); ctx.lineWidth = 3.4; ctx.lineCap = 'round';
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * TAU;
+      ctx.beginPath(); ctx.moveTo(Math.cos(a) * 6, Math.sin(a) * 6); ctx.lineTo(Math.cos(a) * 19, Math.sin(a) * 19); ctx.stroke();
+    }
+    ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(0, 0, 5, 0, TAU); ctx.fill();
+    ctx.restore();
+    if (art) {                                                                          // 玩家
+      art.char(ctx, dx - 66, DECK_Y + 2, 1.75, {
+        kind: 'hero', role: 'melee', name: 'hooker', tier: 1, facing: 1, t,
+        moving: hook.state === 'reel', flash: state.stun > 0,
+      });
+    } else { ctx.fillStyle = C.hero; ctx.fillRect(dx - 90, DECK_Y - 66, 34, 66); }
+  }
+  function drawHook(ctx, t) {
+    const tip = tipPos();
+    const heavy = hook.item ? clamp(hook.item.weight / 2.4, 0, 1) : 0;
+    const wig = hook.state === 'reel' ? Math.sin(t * 24) * heavy * 4 : 0;
+    const ax = Math.sin(hook.a), ay = -Math.cos(hook.a);
+    if (hook.state === 'swing' && state.phase === 'play' && state.stun <= 0) {
+      ctx.save();                                              // 瞄准辅助线
+      ctx.setLineDash([5, 12]); ctx.lineWidth = 2; ctx.strokeStyle = fade('#ffffff', 0.26);
+      ctx.beginPath(); ctx.moveTo(PIVOT.x + ax * 26, PIVOT.y + ay * 26); ctx.lineTo(PIVOT.x + ax * 226, PIVOT.y + ay * 226); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = fade('#ffffff', 0.4);
+      ctx.beginPath();
+      ctx.moveTo(PIVOT.x + ax * 240, PIVOT.y + ay * 240);
+      ctx.lineTo(PIVOT.x + ax * 224 + ay * 8, PIVOT.y + ay * 224 - ax * 8);
+      ctx.lineTo(PIVOT.x + ax * 224 - ay * 8, PIVOT.y + ay * 224 + ax * 8);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+      let snap = null, bd = aimSnap();                          // 会被吸附的物件高亮
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        if (it.grabbed) continue;
+        const d = Math.abs(angDiff(Math.atan2(it.x - PIVOT.x, PIVOT.y - it.y), hook.a));
+        if (d < bd) { bd = d; snap = it; }
+      }
+      if (snap) {
+        ctx.strokeStyle = fade(C.gold, 0.8); ctx.lineWidth = 2.4;
+        ctx.beginPath(); ctx.arc(snap.x, snap.y, snap.r + 8, 0, TAU); ctx.stroke();
+      }
+    }
+    const mx = (PIVOT.x + tip.x) / 2 + wig, my = (PIVOT.y + tip.y) / 2;    // 绳子
+    ctx.save();
+    ctx.strokeStyle = fade(C.ink, 0.55); ctx.lineWidth = 5.5;
+    ctx.beginPath(); ctx.moveTo(PIVOT.x, PIVOT.y); ctx.quadraticCurveTo(mx, my, tip.x, tip.y); ctx.stroke();
+    ctx.strokeStyle = fade('#e8f6ff', 0.72); ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.moveTo(PIVOT.x, PIVOT.y); ctx.quadraticCurveTo(mx, my, tip.x, tip.y); ctx.stroke();
+    ctx.restore();
+    ctx.save(); ctx.translate(tip.x, tip.y); ctx.rotate(hook.a);           // 钩爪
+    ctx.strokeStyle = C.hero; ctx.lineWidth = 3.6; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(0, 12); ctx.lineTo(0, -4); ctx.stroke();
+    ctx.strokeStyle = fade(C.hero2, 0.95);
+    ctx.beginPath(); ctx.moveTo(-12, 14); ctx.quadraticCurveTo(-15, -6, 0, -16); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(12, 14); ctx.quadraticCurveTo(15, -6, 0, -16); ctx.stroke();
+    ctx.strokeStyle = C.hero; ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(0, -22); ctx.stroke();
+    ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(0, -4, 3.4, 0, TAU); ctx.fill();
+    ctx.restore();
+    if (hook.item) drawItemAt(ctx, hook.item, tip.x, tip.y - 8, 0.82, t);  // 抓着的物件
+  }
+  function drawWorld(ctx, t) {
+    const sh = (fx && fx.shakeAmt) || 0;
+    ctx.save();
+    if (sh > 0.4) ctx.translate(Math.sin(t * 73) * sh * 0.5, Math.sin(t * 61) * sh * 0.5);
+    drawWater(ctx, t);
+    drawSeabed(ctx, t);
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.grabbed) continue;
+      drawItemAt(ctx, it, it.x, it.y + Math.sin(t * 1.5 + it.bob) * 3, 1, t);
+    }
+    drawHook(ctx, t);
+    drawRaft(ctx, t);
+    ctx.restore();
+  }
+
+  /* ----------------------- 绘制：物件 ----------------------- */
+  function drawItemAt(ctx, it, x, y, s, t) {
+    const c = col(it.color), r = it.r * s;
+    const glow = it.kind === 'bomb' ? 0.18 : it.kind === 'treasure' ? (it.tier >= 2 ? 0.2 : 0.09) : 0.07;
+    ctx.save(); ctx.translate(x, y);
+    ctx.globalAlpha = glow * (0.72 + 0.28 * Math.sin(t * 2.6 + it.bob));
+    ctx.fillStyle = it.kind === 'bomb' ? col('danger') : c;
+    ctx.beginPath(); ctx.arc(0, 0, r * 1.3, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+    drawShape(ctx, it, r, c);
+    if (it.kind !== 'treasure') {                              // 危险物警示环
+      ctx.save();
+      ctx.setLineDash([4, 4]); ctx.lineDashOffset = it.kind === 'bomb' ? -t * 14 : 0;
+      ctx.strokeStyle = fade(col('danger'), it.kind === 'bomb' ? 0.85 : 0.55); ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.arc(0, 0, r + 6, 0, TAU); ctx.stroke();
+      ctx.restore();
+      if (it.kind === 'bomb') {
+        const pulse = 0.5 + 0.5 * Math.sin(t * 6 + it.bob);
+        ctx.strokeStyle = fade(col('danger'), 0.2 + pulse * 0.35); ctx.lineWidth = 2.2;
+        ctx.beginPath(); ctx.arc(0, 0, r + 9 + pulse * 4, 0, TAU); ctx.stroke();
+      }
+    }
+    if (it.tier === 3) {                                       // 稀有宝闪光
+      for (let i = 0; i < 3; i++) {
+        const a = t * 1.7 + i * (TAU / 3) + it.bob, rr = r + 7 + Math.sin(t * 3 + i) * 2;
+        ctx.fillStyle = fade('#ffffff', 0.6 + 0.4 * Math.sin(t * 4 + i));
+        ctx.beginPath(); ctx.arc(Math.cos(a) * rr, Math.sin(a) * rr, 2.2, 0, TAU); ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+  function drawShape(ctx, it, r, c) {
+    const dark = fade(C.ink, 0.45);
+    const poly = (n, rad, rot, wob) => {                        // 共用：n 边形
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * TAU + (rot || 0);
+        const rr = rad * (wob ? 0.7 + 0.28 * Math.sin(i * 2.3 + it.bob) : 1);
+        if (i === 0) ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); else ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+      }
+      ctx.closePath();
+    };
+    switch (it.shape) {
+      case 'gem':
+        ctx.fillStyle = c;
+        ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(r * 0.82, 0); ctx.lineTo(0, r); ctx.lineTo(-r * 0.82, 0); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = fade('#ffffff', 0.32);
+        ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(r * 0.82, 0); ctx.lineTo(0, 0); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = dark; ctx.lineWidth = 1.6; ctx.stroke();
+        break;
+      case 'pearl':
+        ctx.fillStyle = c; ctx.beginPath(); ctx.arc(0, 0, r * 0.92, 0, TAU); ctx.fill();
+        ctx.fillStyle = fade('#ffffff', 0.45); ctx.beginPath(); ctx.arc(-r * 0.3, -r * 0.32, r * 0.36, 0, TAU); ctx.fill();
+        ctx.strokeStyle = dark; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(0, 0, r * 0.92, 0, TAU); ctx.stroke();
+        break;
+      case 'urn':
+        ctx.fillStyle = c; roundRect(ctx, -r * 0.62, -r * 0.12, r * 1.24, r * 1.1, r * 0.34); ctx.fill();
+        ctx.fillStyle = fade(c, 0.9); roundRect(ctx, -r * 0.3, -r * 0.62, r * 0.6, r * 0.5, r * 0.14); ctx.fill();
+        ctx.fillStyle = dark; roundRect(ctx, -r * 0.46, -r * 0.66, r * 0.92, r * 0.16, r * 0.08); ctx.fill();
+        break;
+      case 'chest':
+        ctx.fillStyle = c; roundRect(ctx, -r * 0.9, -r * 0.28, r * 1.8, r * 1.1, r * 0.16); ctx.fill();
+        ctx.fillStyle = fade(c, 0.82);
+        ctx.beginPath(); ctx.moveTo(-r * 0.9, -r * 0.28); ctx.quadraticCurveTo(0, -r * 1.15, r * 0.9, -r * 0.28); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = C.gold; roundRect(ctx, -r * 0.14, -r * 0.34, r * 0.28, r * 0.5, 2); ctx.fill();
+        break;
+      case 'crown':
+        ctx.fillStyle = c;
+        ctx.beginPath();
+        ctx.moveTo(-r, r * 0.55); ctx.lineTo(-r, -r * 0.4); ctx.lineTo(-r * 0.5, r * 0.05);
+        ctx.lineTo(0, -r * 0.75); ctx.lineTo(r * 0.5, r * 0.05); ctx.lineTo(r, -r * 0.4);
+        ctx.lineTo(r, r * 0.55); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = fade('#ffffff', 0.25); ctx.fillRect(-r * 0.92, r * 0.34, r * 1.84, r * 0.16);
+        break;
+      case 'orb':
+        ctx.fillStyle = fade(c, 0.28); ctx.beginPath(); ctx.arc(0, 0, r * 1.05, 0, TAU); ctx.fill();
+        ctx.fillStyle = c; ctx.beginPath(); ctx.arc(0, 0, r * 0.78, 0, TAU); ctx.fill();
+        ctx.fillStyle = fade('#ffffff', 0.6); ctx.beginPath(); ctx.arc(-r * 0.28, -r * 0.3, r * 0.26, 0, TAU); ctx.fill();
+        ctx.strokeStyle = fade('#ffffff', 0.55); ctx.lineWidth = 2;
+        ctx.save(); ctx.rotate(0.4); ctx.beginPath(); ctx.ellipse(0, 0, r * 1.05, r * 0.36, 0, 0, TAU); ctx.stroke(); ctx.restore();
+        break;
+      case 'crystal':
+        ctx.fillStyle = c; poly(6, r * 0.85, -Math.PI / 2); ctx.fill();
+        ctx.fillStyle = fade('#ffffff', 0.28);
+        ctx.beginPath(); ctx.moveTo(0, -r * 0.9); ctx.lineTo(r * 0.5, 0); ctx.lineTo(0, 0); ctx.closePath(); ctx.fill();
+        break;
+      case 'shell':
+        ctx.fillStyle = c; ctx.beginPath(); ctx.arc(0, r * 0.2, r * 0.95, Math.PI, 0); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = dark; ctx.lineWidth = 1.6;
+        for (let i = -2; i <= 2; i++) { ctx.beginPath(); ctx.moveTo(0, r * 0.2); ctx.lineTo(i * r * 0.42, r * 0.2 - r * 0.86); ctx.stroke(); }
+        break;
+      case 'rubble':
+        ctx.fillStyle = c; poly(7, r, 0, true); ctx.fill();
+        ctx.strokeStyle = dark; ctx.lineWidth = 1.6; ctx.stroke();
+        break;
+      case 'bomb':
+        ctx.fillStyle = fade(C.ink, 0.92); ctx.beginPath(); ctx.arc(0, r * 0.1, r * 0.86, 0, TAU); ctx.fill();
+        ctx.strokeStyle = col('danger'); ctx.lineWidth = 2.4; ctx.beginPath(); ctx.arc(0, r * 0.1, r * 0.86, 0, TAU); ctx.stroke();
+        ctx.strokeStyle = c; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(r * 0.1, -r * 0.7); ctx.quadraticCurveTo(r * 0.7, -r * 1.1, r * 0.55, -r * 1.5); ctx.stroke();
+        ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(r * 0.55, -r * 1.5, 3.2, 0, TAU); ctx.fill();
+        break;
+      case 'spike':
+        ctx.fillStyle = c; poly(18, r, 0, false);
+        ctx.beginPath();                                        // 18 边改成锯齿
+        for (let i = 0; i < 18; i++) {
+          const a = (i / 18) * TAU - Math.PI / 2 + it.bob;
+          const rr = i % 2 === 0 ? r * 0.92 : r * 1.25;
+          if (i === 0) ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); else ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+        }
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = fade(C.ink, 0.9);
+        ctx.beginPath(); ctx.arc(-r * 0.24, -r * 0.1, 2.2, 0, TAU); ctx.fill();
+        ctx.beginPath(); ctx.arc(r * 0.24, -r * 0.1, 2.2, 0, TAU); ctx.fill();
+        break;
+      default:                                                  // coin
+        ctx.fillStyle = c; ctx.beginPath(); ctx.arc(0, 0, r * 0.9, 0, TAU); ctx.fill();
+        ctx.strokeStyle = fade(C.ink, 0.4); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, r * 0.58, 0, TAU); ctx.stroke();
+        ctx.fillStyle = fade('#ffffff', 0.35); ctx.beginPath(); ctx.arc(-r * 0.26, -r * 0.3, r * 0.28, 0, TAU); ctx.fill();
+        break;
+    }
+  }
+
+  /* ----------------------- 绘制：HUD / 商店 ----------------------- */
+  function drawHUD(ctx, t) {
+    const ui = rule.ui, low = state.left <= 10, play = state.phase === 'play';
+    panel(ctx, 16, 12, 286, 74, { r: 16, fill: C.ui, stroke: fade('#ffffff', 0.12), shadowBlur: 8 });
+    text(ctx, '得分', 32, 31, { size: 13, color: fade('#ffffff', 0.55), weight: 700 });
+    text(ctx, '目标 ' + fmt(level.target), 288, 31, { size: 13, color: fade('#ffffff', 0.55), weight: 700, align: 'right' });
+    text(ctx, fmt(state.score), 32, 55, { size: 28, color: '#fff', weight: 900 });
+    bar(ctx, 32, 70, 254, 8, state.score / Math.max(1, level.target), { c1: C.accent2, c2: C.gold });
+    panel(ctx, 308, 12, 140, 74, { r: 16, fill: C.ui, stroke: low ? fade(C.danger, 0.7) : fade('#ffffff', 0.12), shadowBlur: 8 });
+    text(ctx, '时间', 378, 31, { size: 13, color: fade('#ffffff', 0.55), weight: 700, align: 'center' });
+    text(ctx, fmtTime(state.left), 378, 55, { size: 26, weight: 900, align: 'center', color: low ? col('danger') : '#fff' });
+    panel(ctx, 454, 12, 174, 74, { r: 16, fill: C.ui, stroke: fade('#ffffff', 0.12), shadowBlur: 8 });
+    text(ctx, '金币', 470, 31, { size: 13, color: fade('#ffffff', 0.55), weight: 700 });
+    ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(478, 57, 8, 0, TAU); ctx.fill();
+    text(ctx, fmt(coins()), 494, 55, { size: 24, color: '#fff', weight: 900 });
+    if (state.score >= level.target && play) {                 // 达标提示 + 收工键
+      panel(ctx, 16, 96, 250, 38, { r: 19, fill: fade(C.ok, 0.18), stroke: fade(C.ok, 0.55), shadow: false });
+      text(ctx, '已达标 · 可继续捞或收工', 32, 115, { size: 15, color: col('ok'), weight: 800 });
+      button(ctx, ui.claim, '收工 · 结算', { size: 22, fill1: C.gold, fill2: C.accent2, color: C.ink });
+    } else if (play && state.time < 7 && level.id <= 2) {
+      text(ctx, '点击屏幕 / 空格 发射钩爪', W / 2, H - 40, { size: 19, color: fade('#ffffff', 0.75), weight: 700, align: 'center' });
+    }
+    if (state.stun > 0) text(ctx, '钩爪震僵…', W / 2, PIVOT.y - 180, { size: 20, color: col('danger'), weight: 900, align: 'center' });
+    if (state.phase === 'shop') drawShop(ctx, t);
+  }
+  function drawShop(ctx, t) {
+    panel(ctx, 36, 270, 648, 536, { r: 24, fill: C.ink, stroke: fade(C.accent, 0.45), shadow: false });
+    text(ctx, `第 ${level.id} 关 · 打捞准备`, W / 2, 302, { size: 24, color: '#fff', weight: 900, align: 'center' });
+    text(ctx, `目标 ${fmt(level.target)} 分 · 限时 ${level.sec} 秒 · 当前${unit} ${fmt(coins())}`, W / 2, 332, {
+      size: 14, color: fade('#ffffff', 0.62), weight: 600, align: 'center',
+    });
+    D.upgrades.forEach((u, i) => {
+      const y = 356 + i * 110, lv = up(u.id), maxed = lv >= u.max, cost = costOf(u, lv);
+      const afford = !maxed && coins() >= cost;
+      panel(ctx, 64, y, 592, 100, { r: 16, fill: fade('#ffffff', 0.055), stroke: fade('#ffffff', 0.1), shadow: false });
+      ctx.fillStyle = fade(col(u.color), 0.2); ctx.beginPath(); ctx.arc(106, y + 50, 26, 0, TAU); ctx.fill();
+      drawUpIcon(ctx, u.id, 106, y + 50, col(u.color));
+      text(ctx, u.name, 144, y + 30, { size: 21, color: '#fff', weight: 900 });
+      text(ctx, u.desc, 144, y + 56, { size: 13, color: fade('#ffffff', 0.58), weight: 600 });
+      for (let k = 0; k < u.max; k++) {
+        roundRect(ctx, 144 + k * 22, y + 74, 16, 8, 4);
+        ctx.fillStyle = k < lv ? col(u.color) : fade('#ffffff', 0.13); ctx.fill();
+      }
+      const btn = { x: 500, y: y + 18, w: 152, h: 64 };        // 行内购买键（平涂，省帧率）
+      roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 14);
+      ctx.fillStyle = maxed ? fade('#ffffff', 0.1) : afford ? col(u.color) : fade('#ffffff', 0.08); ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = maxed ? fade('#ffffff', 0.14) : afford ? fade('#ffffff', 0.5) : fade('#ffffff', 0.14);
+      roundRect(ctx, btn.x, btn.y, btn.w, btn.h, 14); ctx.stroke();
+      text(ctx, maxed ? '已满级' : `升级 ${cost}`, btn.x + btn.w / 2, btn.y + btn.h / 2 + 1, {
+        size: 19, weight: 900, align: 'center', color: maxed ? fade('#ffffff', 0.4) : afford ? C.ink : fade('#ffffff', 0.45),
+      });
+    });
+    button(ctx, rule.ui.start, `开始打捞 · ${level.sec} 秒`, { size: 26, shadow: false });
+    text(ctx, `${unit}来自通关奖励 · 升级永久保留 · 达标后还能继续捞宝冲星级`, W / 2, H - 42, {
+      size: 13, color: fade('#ffffff', 0.45), weight: 600, align: 'center',
+    });
+  }
+  function drawUpIcon(ctx, id, x, y, c) {
+    ctx.save(); ctx.translate(x, y);
+    ctx.strokeStyle = c; ctx.fillStyle = c; ctx.lineWidth = 2.6; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if (id === 'power') {
+      ctx.beginPath(); ctx.moveTo(-7, 10); ctx.lineTo(-7, 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-13, 12); ctx.quadraticCurveTo(-16, -6, 0, -15); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(13, 12); ctx.quadraticCurveTo(16, -6, 0, -15); ctx.stroke();
+    } else if (id === 'reel') {
+      ctx.beginPath(); ctx.arc(0, 0, 10, -2.4, 2.4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(9, -8); ctx.lineTo(11, 1); ctx.lineTo(2, -2); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 0, 3, 0, TAU); ctx.fill();
+    } else if (id === 'aim') {
+      ctx.beginPath(); ctx.arc(0, 0, 9, 0, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 3.4, 0, TAU); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(-15, 0); ctx.lineTo(-6, 0); ctx.moveTo(6, 0); ctx.lineTo(15, 0);
+      ctx.moveTo(0, -15); ctx.lineTo(0, -6); ctx.moveTo(0, 6); ctx.lineTo(0, 15);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? 4.6 : 11;
+        if (i === 0) ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); else ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+      }
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+  /* ----------------------- 输入 ----------------------- */
+  function pointer(kind, x, y, key) {
+    if (kind === 'key') {
+      if (key === ' ' || key === 'Enter' || key === 'Spacebar') {
+        if (state.phase === 'shop') startPlay();
+        else if (state.phase === 'play') fire();
+      }
+      return;
+    }
+    if (kind !== 'down') return;
+    const ui = rule.ui;
+    if (state.phase === 'shop') {
+      for (let i = 0; i < ui.shop.length; i++) {
+        if (inRect(x, y, ui.shop[i].row)) { buy(ui.shop[i].id); return; }
+      }
+      if (inRect(x, y, ui.start)) startPlay();
+      return;
+    }
+    if (state.phase !== 'play') return;
+    if (state.score >= level.target && inRect(x, y, ui.claim)) { claim(); return; }
+    fire();
+  }
+
+  /* ----------------------- 规则对象 ----------------------- */
+  const rule = {
+    status: 'playing',
+    ui: { shop: [], start: { x: 130, y: 832, w: 460, h: 80 }, claim: { x: W / 2 - 150, y: H - 74, w: 300, h: 58 } },
+    init() {
+      if (S) {
+        const u = S.data.upgrades || {};
+        for (const k of ['power', 'reel', 'aim', 'luck']) state.up[k] = clamp(u[k] | 0, 0, 5);
+      }
+      placeItems();
+      rule.ui.shop = D.upgrades.map((u, i) => ({
+        id: u.id,
+        row: { x: 64, y: 356 + i * 110, w: 592, h: 100 },
+        btn: { x: 500, y: 356 + i * 110 + 18, w: 152, h: 64 },
+      }));
+      rule.ui.start = { x: 130, y: 832, w: 460, h: 80 };
+      rule.ui.claim = { x: W / 2 - 150, y: H - 74, w: 300, h: 58 };
+    },
+    update, drawWorld, drawHUD, pointer, bot,
+    result() {
+      return { stars: 0, score: Math.round(state.score), coins: 0, kills: state.grabs, time: Math.round(state.time) };
+    },
+    debug() {
+      return {
+        phase: state.phase, status: rule.status,
+        score: state.score, target: level.target,
+        left: +state.left.toFixed(1), time: +state.time.toFixed(1),
+        shots: state.shots, kills: state.grabs, items: items.length,
+        hook: hook.state, stun: state.stun, coins: coins(),
+        power: up('power'), reel: up('reel'), aim: up('aim'), luck: up('luck'),
+        reached: state.reached,
+        pos: items.filter((it) => it.val > 0).length,
+        board: items.reduce((a, it) => a + (it.val > 0 ? it.val : 0), 0),
+      };
+    },
+  };
+  return rule;
+}
+
+return { createRule };
+})();
+__m["js/main.js"] = (function(){
+/* 入口：创建 App，绑定启动遮罩；window.__game 供调试与自动化测试使用 */
+const { App } = __m["js/app.js"];
+
+const { CONTENT } = __m["js/content.js"];
+
+const { createRule } = __m["js/rules/hook.js"];
+
+
+const canvas = document.getElementById('game');
+const app = new App(canvas, CONTENT, createRule);
+app.mount();
+window.__game = app;
+
+const boot = document.getElementById('boot');
+function hideBoot() {
+  if (boot && boot.parentNode) {
+    boot.classList.add('hide');
+    setTimeout(() => { try { boot.remove(); } catch (e) {} }, 420);
+  }
+  app.begin();
+}
+if (boot) boot.addEventListener('pointerdown', hideBoot, { once: true });
+window.addEventListener('pointerdown', () => app.begin(), { once: true });
+
+return {  };
+})();
+})();
+
+</script>
+</body>
+</html>

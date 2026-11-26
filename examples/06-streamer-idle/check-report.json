@@ -1,0 +1,135 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "data",
+      "ok": true,
+      "info": {
+        "levels": 24,
+        "chapters": 6,
+        "defs": 4
+      }
+    },
+    {
+      "name": "sim",
+      "ok": true,
+      "info": {
+        "wins": 24,
+        "total": 24,
+        "minSec": 124.8,
+        "maxSec": 124.8,
+        "idleWins": 0
+      }
+    },
+    {
+      "name": "singlefile",
+      "ok": true,
+      "info": {
+        "file": "三十天开播.html",
+        "kb": 129.8,
+        "external": 0
+      }
+    },
+    {
+      "name": "browser",
+      "ok": true,
+      "info": {
+        "ok": true,
+        "scene": "play",
+        "level": 3,
+        "status": "playing",
+        "fps": 60,
+        "W": 720,
+        "H": 1280,
+        "rule": {
+          "status": "playing",
+          "phase": "plan",
+          "day": 1,
+          "ap": 2,
+          "coins": 110,
+          "rev": 0,
+          "fans": 0,
+          "target": 2777,
+          "fanTarget": 118,
+          "staff": 0,
+          "venue": 1,
+          "inc": 2.22,
+          "time": 2.9,
+          "kills": 0,
+          "win": false,
+          "stars": 0,
+          "reason": "",
+          "finalRatio": 0,
+          "spend": 0,
+          "hires": 0,
+          "upgs": 0,
+          "showUses": 0
+        },
+        "save": {
+          "unlocked": 1,
+          "stars": 0
+        }
+      }
+    },
+    {
+      "name": "browser-result",
+      "ok": true,
+      "info": {
+        "ok": true
+      }
+    }
+  ],
+  "failures": [],
+  "warnings": [],
+  "stats": {
+    "sim": {
+      "wins": 24,
+      "total": 24,
+      "minSec": 124.8,
+      "maxSec": 124.8,
+      "idleWins": 0
+    },
+    "singlefile": {
+      "file": "三十天开播.html",
+      "kb": 129.8,
+      "external": 0
+    },
+    "browser": {
+      "ok": true,
+      "scene": "play",
+      "level": 3,
+      "status": "playing",
+      "fps": 60,
+      "W": 720,
+      "H": 1280,
+      "rule": {
+        "status": "playing",
+        "phase": "plan",
+        "day": 1,
+        "ap": 2,
+        "coins": 110,
+        "rev": 0,
+        "fans": 0,
+        "target": 2777,
+        "fanTarget": 118,
+        "staff": 0,
+        "venue": 1,
+        "inc": 2.22,
+        "time": 2.9,
+        "kills": 0,
+        "win": false,
+        "stars": 0,
+        "reason": "",
+        "finalRatio": 0,
+        "spend": 0,
+        "hires": 0,
+        "upgs": 0,
+        "showUses": 0
+      },
+      "save": {
+        "unlocked": 1,
+        "stars": 0
+      }
+    }
+  }
+}

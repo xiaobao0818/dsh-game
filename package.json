@@ -1,0 +1,44 @@
+{
+  "name": "dsh-game-studio",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "游戏工坊：一句话描述生成完整可玩的 HTML5 游戏（程序化美术/音频、关卡生成、无头仿真与浏览器自检），并附带游戏开发方法论与项目迭代工具。",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "engine",
+    "skills",
+    "docs",
+    "locale",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "game",
+    "game-development",
+    "generator",
+    "html5",
+    "plugin",
+    "game-studio"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaobao0818/dsh-game.git"
+  },
+  "bugs": {
+    "url": "https://github.com/xiaobao0818/dsh-game/issues"
+  },
+  "author": "xiaobao0818"
+}

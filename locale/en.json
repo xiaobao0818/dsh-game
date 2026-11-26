@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Game studio",
+    "description": "Turn one sentence into a complete playable HTML5 game: editable project, offline single-file build, and automated checks. Say \"make a tower-defense game about…\" to trigger game_forge; use game_plan to preview choices and game_build / game_check to iterate and verify. Procedural placeholder art and synthesized audio; no installer packaging; browser checks need local Chrome.",
+    "detail": "docs/PREVIEW.md"
+  }
+}

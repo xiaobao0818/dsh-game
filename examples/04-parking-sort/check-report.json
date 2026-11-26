@@ -1,0 +1,127 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "data",
+      "ok": true,
+      "info": {
+        "levels": 25,
+        "chapters": 5,
+        "defs": 9
+      }
+    },
+    {
+      "name": "sim",
+      "ok": true,
+      "info": {
+        "wins": 25,
+        "total": 25,
+        "minSec": 29.4,
+        "maxSec": 32.1,
+        "idleWins": 0
+      }
+    },
+    {
+      "name": "singlefile",
+      "ok": true,
+      "info": {
+        "file": "老小区归位.html",
+        "kb": 138.9,
+        "external": 0
+      }
+    },
+    {
+      "name": "browser",
+      "ok": true,
+      "info": {
+        "ok": true,
+        "scene": "play",
+        "level": 3,
+        "status": "playing",
+        "fps": 60,
+        "W": 720,
+        "H": 1280,
+        "rule": {
+          "time": 2.92,
+          "score": 0,
+          "moves": 0,
+          "kills": 0,
+          "clears": 0,
+          "cleared": 0,
+          "total": 24,
+          "queue": 19,
+          "belt": 0,
+          "pull": 3,
+          "jam": 0,
+          "lanes": [
+            0,
+            2,
+            3
+          ],
+          "planFails": 0,
+          "status": "playing"
+        },
+        "save": {
+          "unlocked": 1,
+          "stars": 0
+        }
+      }
+    },
+    {
+      "name": "browser-result",
+      "ok": true,
+      "info": {
+        "ok": true
+      }
+    }
+  ],
+  "failures": [],
+  "warnings": [],
+  "stats": {
+    "sim": {
+      "wins": 25,
+      "total": 25,
+      "minSec": 29.4,
+      "maxSec": 32.1,
+      "idleWins": 0
+    },
+    "singlefile": {
+      "file": "老小区归位.html",
+      "kb": 138.9,
+      "external": 0
+    },
+    "browser": {
+      "ok": true,
+      "scene": "play",
+      "level": 3,
+      "status": "playing",
+      "fps": 60,
+      "W": 720,
+      "H": 1280,
+      "rule": {
+        "time": 2.92,
+        "score": 0,
+        "moves": 0,
+        "kills": 0,
+        "clears": 0,
+        "cleared": 0,
+        "total": 24,
+        "queue": 19,
+        "belt": 0,
+        "pull": 3,
+        "jam": 0,
+        "lanes": [
+          0,
+          2,
+          3
+        ],
+        "planFails": 0,
+        "status": "playing"
+      },
+      "save": {
+        "unlocked": 1,
+        "stars": 0
+      }
+    }
+  }
+}

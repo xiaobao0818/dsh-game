@@ -1,0 +1,145 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "data",
+      "ok": true,
+      "info": {
+        "levels": 24,
+        "chapters": 5,
+        "defs": 3
+      }
+    },
+    {
+      "name": "sim",
+      "ok": true,
+      "info": {
+        "wins": 24,
+        "total": 24,
+        "minSec": 49.8,
+        "maxSec": 93.5,
+        "idleWins": 0
+      }
+    },
+    {
+      "name": "singlefile",
+      "ok": true,
+      "info": {
+        "file": "火锅店合成记.html",
+        "kb": 151.2,
+        "external": 0
+      }
+    },
+    {
+      "name": "browser",
+      "ok": true,
+      "info": {
+        "ok": true,
+        "scene": "play",
+        "level": 3,
+        "status": "playing",
+        "fps": 60,
+        "W": 720,
+        "H": 1280,
+        "rule": {
+          "gold": 50,
+          "baseHp": 98,
+          "enemies": 0,
+          "units": 0,
+          "kills": 0,
+          "leaked": 0,
+          "time": 2.9,
+          "spawned": 0,
+          "schedule": 14,
+          "merges": 0,
+          "summons": 0,
+          "bestTier": 1,
+          "dps": 0,
+          "sel": -1,
+          "cells": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "status": "playing"
+        },
+        "save": {
+          "unlocked": 1,
+          "stars": 0
+        }
+      }
+    },
+    {
+      "name": "browser-result",
+      "ok": true,
+      "info": {
+        "ok": true
+      }
+    }
+  ],
+  "failures": [],
+  "warnings": [],
+  "stats": {
+    "sim": {
+      "wins": 24,
+      "total": 24,
+      "minSec": 49.8,
+      "maxSec": 93.5,
+      "idleWins": 0
+    },
+    "singlefile": {
+      "file": "火锅店合成记.html",
+      "kb": 151.2,
+      "external": 0
+    },
+    "browser": {
+      "ok": true,
+      "scene": "play",
+      "level": 3,
+      "status": "playing",
+      "fps": 60,
+      "W": 720,
+      "H": 1280,
+      "rule": {
+        "gold": 50,
+        "baseHp": 98,
+        "enemies": 0,
+        "units": 0,
+        "kills": 0,
+        "leaked": 0,
+        "time": 2.9,
+        "spawned": 0,
+        "schedule": 14,
+        "merges": 0,
+        "summons": 0,
+        "bestTier": 1,
+        "dps": 0,
+        "sel": -1,
+        "cells": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "status": "playing"
+      },
+      "save": {
+        "unlocked": 1,
+        "stars": 0
+      }
+    }
+  }
+}

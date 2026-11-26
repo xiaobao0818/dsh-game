@@ -1,0 +1,25 @@
+{
+  "generator": "dsh-game-studio",
+  "version": 1,
+  "slug": "merge-dev",
+  "title": "火锅店合成记",
+  "subtitle": "厨房餐厅 · 采购员的冒险",
+  "tagline": "同级单位两两合成，越合越强；自动攻击来敌，守住底线。",
+  "genre": "merge",
+  "theme": "kitchen",
+  "themeName": "厨房餐厅",
+  "orientation": "portrait",
+  "levels": 24,
+  "seed": 202101286,
+  "brief": "厨房餐厅题材的合成塔防，24关，竖屏",
+  "plan": {
+    "theme": "kitchen",
+    "themeReason": "kitchen(4) / city(2)",
+    "genre": "merge",
+    "genreReason": "合成",
+    "title": "火锅店合成记",
+    "levels": 24,
+    "orientation": "portrait"
+  },
+  "createdAt": "2026-11-26T22:18:44.787Z"
+}

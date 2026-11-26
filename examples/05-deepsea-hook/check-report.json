@@ -1,0 +1,129 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "data",
+      "ok": true,
+      "info": {
+        "levels": 24,
+        "chapters": 6,
+        "defs": 5
+      }
+    },
+    {
+      "name": "sim",
+      "ok": true,
+      "info": {
+        "wins": 24,
+        "total": 24,
+        "minSec": 43,
+        "maxSec": 67.9,
+        "idleWins": 0
+      }
+    },
+    {
+      "name": "singlefile",
+      "ok": true,
+      "info": {
+        "file": "深海打捞.html",
+        "kb": 129.4,
+        "external": 0
+      }
+    },
+    {
+      "name": "browser",
+      "ok": true,
+      "info": {
+        "ok": true,
+        "scene": "play",
+        "level": 3,
+        "status": "playing",
+        "fps": 60,
+        "W": 720,
+        "H": 1280,
+        "rule": {
+          "phase": "shop",
+          "status": "playing",
+          "score": 0,
+          "target": 1230,
+          "left": 66,
+          "time": 0,
+          "shots": 0,
+          "kills": 0,
+          "items": 33,
+          "hook": "swing",
+          "stun": 0,
+          "coins": 160,
+          "power": 0,
+          "reel": 0,
+          "aim": 0,
+          "luck": 0,
+          "reached": false,
+          "pos": 28,
+          "board": 2063
+        },
+        "save": {
+          "unlocked": 1,
+          "stars": 0
+        }
+      }
+    },
+    {
+      "name": "browser-result",
+      "ok": true,
+      "info": {
+        "ok": true
+      }
+    }
+  ],
+  "failures": [],
+  "warnings": [],
+  "stats": {
+    "sim": {
+      "wins": 24,
+      "total": 24,
+      "minSec": 43,
+      "maxSec": 67.9,
+      "idleWins": 0
+    },
+    "singlefile": {
+      "file": "深海打捞.html",
+      "kb": 129.4,
+      "external": 0
+    },
+    "browser": {
+      "ok": true,
+      "scene": "play",
+      "level": 3,
+      "status": "playing",
+      "fps": 60,
+      "W": 720,
+      "H": 1280,
+      "rule": {
+        "phase": "shop",
+        "status": "playing",
+        "score": 0,
+        "target": 1230,
+        "left": 66,
+        "time": 0,
+        "shots": 0,
+        "kills": 0,
+        "items": 33,
+        "hook": "swing",
+        "stun": 0,
+        "coins": 160,
+        "power": 0,
+        "reel": 0,
+        "aim": 0,
+        "luck": 0,
+        "reached": false,
+        "pos": 28,
+        "board": 2063
+      },
+      "save": {
+        "unlocked": 1,
+        "stars": 0
+      }
+    }
+  }
+}

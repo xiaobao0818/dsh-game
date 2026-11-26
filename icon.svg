@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Game studio">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2340"/>
+      <stop offset="1" stop-color="#2c1840"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe9a8"/>
+      <stop offset="1" stop-color="#f2a33c"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8ff0ff"/>
+      <stop offset="1" stop-color="#3f7ea8"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="124" height="124" rx="28" fill="url(#bg)" stroke="#3a2d5a" stroke-width="2"/>
+  <!-- gamepad body -->
+  <path d="M32 58c0-12 9-20 21-20h22c12 0 21 8 21 20v14c0 12-9 20-21 20h-4c-5 0-8-3-11-7l-4-6c-2-3-6-3-8 0l-4 6c-3 4-6 7-11 7h-4c-12 0-21-8-21-20z"
+        fill="none" stroke="url(#cyan)" stroke-width="6" stroke-linejoin="round"/>
+  <!-- dpad -->
+  <path d="M47 60h8M51 56v8" stroke="url(#cyan)" stroke-width="5" stroke-linecap="round"/>
+  <!-- buttons -->
+  <circle cx="80" cy="57" r="4.5" fill="url(#gold)"/>
+  <circle cx="91" cy="68" r="4.5" fill="#ff7ad9"/>
+  <!-- spark of creation -->
+  <path d="M92 22l3.2 7.8 7.8 3.2-7.8 3.2-3.2 7.8-3.2-7.8-7.8-3.2 7.8-3.2z" fill="url(#gold)"/>
+  <circle cx="76" cy="30" r="2.4" fill="#8ff0ff"/>
+  <circle cx="101" cy="39" r="1.8" fill="#8ff0ff"/>
+</svg>

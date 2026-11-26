@@ -1,0 +1,5503 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0d1024">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>僵尸围山门</title>
+<link rel="icon" href="data:,">
+<style>
+/* 基础重置 + 全屏画布 + 启动遮罩（所有游戏共用） */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%; overflow: hidden; background: #211827;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none; touch-action: none;
+}
+#app { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+canvas#game { display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
+#boot {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(120% 120% at 50% 20%, #2a1633 0%, #0d1024 70%);
+  z-index: 20; transition: opacity .35s ease; cursor: pointer;
+}
+#boot.hide { opacity: 0; pointer-events: none; }
+.boot-mask { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(255,255,255,.02) 0 1px, transparent 1px 4px); }
+.boot-card { position: relative; text-align: center; padding: 28px 34px; }
+.boot-title {
+  font-size: clamp(28px, 6vw, 54px); font-weight: 900; letter-spacing: .12em;
+  color: #fff; text-shadow: 0 4px 0 rgba(0,0,0,.25), 0 0 28px rgba(255,207,92,0.55);
+}
+.boot-sub { margin-top: 10px; font-size: clamp(12px, 1.6vw, 16px); letter-spacing: .3em; color: rgba(255,255,255,.72); }
+.boot-hint {
+  margin-top: 34px; font-size: clamp(13px, 1.6vw, 16px); color: #fff; opacity: .9;
+  padding: 10px 20px; border: 1px solid rgba(255,255,255,.35); border-radius: 999px;
+  display: inline-block; animation: bootPulse 1.6s ease-in-out infinite;
+}
+@keyframes bootPulse { 0%,100% { opacity: .55; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="game" aria-label="僵尸围山门"></canvas>
+</div>
+<div id="boot">
+  <div class="boot-mask"></div>
+  <div class="boot-card">
+    <div class="boot-title">僵尸围山门</div>
+    <div class="boot-sub">中式僵尸 · 法师的冒险</div>
+    <div class="boot-hint" id="boot-hint">轻触屏幕开始</div>
+  </div>
+</div>
+<noscript>需要开启 JavaScript 才能游玩。</noscript>
+<script>
+/* 僵尸围山门 · 单文件构建（离线可玩） */
+(function(){
+"use strict";
+const __m = Object.create(null);
+__m["js/core.js"] = (function(){
+/* =========================================================================
+ * core.js —— 纯逻辑层（无 DOM，可在 Node 里跑无头仿真）
+ * 数学工具 / 可复现随机 / 版本化存档
+ * ========================================================================= */
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const invLerp = (a, b, v) => (b === a ? 0 : (v - a) / (b - a));
+const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
+const smoothstep = (t) => t * t * (3 - 2 * t);
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+const easeOutBack = (t) => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
+const TAU = Math.PI * 2;
+const dist2 = (ax, ay, bx, by) => { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; };
+const dist = (ax, ay, bx, by) => Math.sqrt(dist2(ax, ay, bx, by));
+const pointInRect = (x, y, r) => x >= r.x && y >= r.y && x <= r.x + r.w && y <= r.y + r.h;
+const rectsOverlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+const fmt = (n) => {
+  n = Math.floor(n);
+  if (n >= 1e8) return (n / 1e8).toFixed(2).replace(/\.?0+$/, '') + '亿';
+  if (n >= 1e4) return (n / 1e4).toFixed(1).replace(/\.0$/, '') + '万';
+  return String(n);
+};
+const fmtTime = (s) => {
+  s = Math.max(0, Math.floor(s));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+};
+const pick = (rng, arr) => arr[Math.min(arr.length - 1, (rng() * arr.length) | 0)];
+const shuffle = (rng, arr) => {
+  for (let i = arr.length - 1; i > 0; i--) { const j = (rng() * (i + 1)) | 0; const t = arr[i]; arr[i] = arr[j]; arr[j] = t; }
+  return arr;
+};
+
+/* ---------- 可复现随机数（mulberry32） ---------- */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashString(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+class RNG {
+  constructor(seed) { this.seed = typeof seed === 'string' ? hashString(seed) : (seed >>> 0); this.f = mulberry32(this.seed); }
+  next() { return this.f(); }
+  range(a, b) { return a + (b - a) * this.f(); }
+  int(a, b) { return Math.floor(a + (b - a + 1) * this.f()); }
+  pick(arr) { return pick(this.f, arr); }
+  shuffle(arr) { return shuffle(this.f, arr); }
+  chance(p) { return this.f() < p; }
+}
+
+/* ---------- 版本化存档（localStorage 可缺省） ---------- */
+const LS = (() => { try { return typeof window === 'undefined' ? null : (window.localStorage || null); } catch (e) { return null; } })();
+
+function makeSave(slug, customDefault = {}) {
+  const KEY = 'gs_' + slug + '_v1';
+  const DEFAULT = {
+    v: 1,
+    unlocked: 1,
+    stars: {},
+    best: {},
+    coins: 0,
+    totalClears: 0,
+    totalKills: 0,
+    playSec: 0,
+    firstRun: true,
+    settings: { music: true, sfx: true, haptic: true, lowfx: false },
+    flags: {},
+    ...customDefault,
+  };
+  const deepMerge = (base, patch) => {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return patch === undefined ? base : patch;
+    const out = Array.isArray(base) ? base.slice() : { ...base };
+    for (const k of Object.keys(patch)) {
+      const b = base ? base[k] : undefined;
+      const p = patch[k];
+      out[k] = (p && typeof p === 'object' && !Array.isArray(p) && b && typeof b === 'object' && !Array.isArray(b)) ? deepMerge(b, p) : p;
+    }
+    return out;
+  };
+  class Save {
+    constructor() { this.data = this.load(); }
+    load() {
+      try {
+        const raw = LS && LS.getItem(KEY);
+        return raw ? deepMerge(JSON.parse(JSON.stringify(DEFAULT)), JSON.parse(raw)) : JSON.parse(JSON.stringify(DEFAULT));
+      } catch (e) { return JSON.parse(JSON.stringify(DEFAULT)); }
+    }
+    flush() { try { LS && LS.setItem(KEY, JSON.stringify(this.data)); } catch (e) { /* 配额不足时静默 */ } }
+    reset() { this.data = JSON.parse(JSON.stringify(DEFAULT)); this.flush(); }
+    get settings() { return this.data.settings; }
+    setSetting(k, v) { this.data.settings[k] = v; this.flush(); }
+    starOf(id) { return this.data.stars[id] || 0; }
+    isUnlocked(id) { return id <= this.data.unlocked; }
+    complete(id, stars, score) {
+      const d = this.data;
+      d.stars[id] = Math.max(d.stars[id] || 0, stars);
+      if (!d.best[id] || score > d.best[id]) d.best[id] = score;
+      if (id + 1 > d.unlocked) d.unlocked = id + 1;
+      d.totalClears++;
+      this.flush();
+    }
+    totalStars() { return Object.keys(this.data.stars).reduce((s, k) => s + this.data.stars[k], 0); }
+    addCoins(n) { this.data.coins = Math.max(0, (this.data.coins || 0) + n); this.flush(); }
+    flag(k, v) { this.data.flags[k] = v; this.flush(); }
+  }
+  return new Save();
+}
+
+/* ---------- 无头仿真使用的空服务 ---------- */
+const silentAudio = { sfx() {}, setMuted() {}, music() {}, ok: false };
+const silentFx = { burst() {}, text() {}, shake() {}, flash() {}, ring() {}, beam() {}, ok: false };
+
+return { clamp, lerp, invLerp, damp, smoothstep, easeOutCubic, easeOutBack, TAU, dist2, dist, pointInRect, rectsOverlap, fmt, fmtTime, pick, shuffle, mulberry32, hashString, RNG, makeSave, silentAudio, silentFx };
+})();
+__m["js/platform.js"] = (function(){
+/* =========================================================================
+ * platform.js —— 浏览器平台层：自适应布局 / WebAudio 合成音乐音效 /
+ *                 粒子与屏震 / 指针输入
+ * ========================================================================= */
+const { clamp, RNG } = __m["js/core.js"];
+
+
+/* ------------------------------ 布局 ------------------------------ */
+class Layout {
+  constructor(canvas, W, H) {
+    this.canvas = canvas;
+    this.W = W; this.H = H;
+    this.scale = 1; this.ox = 0; this.oy = 0;
+    this.resize();
+  }
+  resize() {
+    // 限制总像素（约 240 万），保证竖屏高分设备也能 60fps
+    const baseDpr = Math.min(2, window.devicePixelRatio || 1);
+    const dpr = Math.max(1, Math.min(baseDpr, Math.sqrt(2400000 / (this.W * this.H))));
+    const vw = window.innerWidth, vh = window.innerHeight;
+    this.scale = Math.min(vw / this.W, vh / this.H);
+    const cw = Math.round(this.W * this.scale), ch = Math.round(this.H * this.scale);
+    this.ox = Math.round((vw - cw) / 2); this.oy = Math.round((vh - ch) / 2);
+    const c = this.canvas;
+    c.width = Math.round(this.W * dpr); c.height = Math.round(this.H * dpr);
+    c.style.width = cw + 'px'; c.style.height = ch + 'px';
+    // #app 已是 flex 居中：不要再加 margin，否则窗口比例与设计比例不同时画布会被二次偏移
+    c.style.marginLeft = '0px'; c.style.marginTop = '0px';
+    this.dpr = dpr;
+  }
+  applyTransform(ctx) { ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); }
+  toDesign(clientX, clientY) {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: ((clientX - r.left) / r.width) * this.W, y: ((clientY - r.top) / r.height) * this.H };
+  }
+}
+
+/* ------------------------------ 音频 ------------------------------ */
+const NOTE = (semi) => 440 * Math.pow(2, semi / 12); // semi 相对 A4
+
+class Sound {
+  constructor(theme) {
+    this.theme = theme || {};
+    this.ctx = null; this.master = null; this.musicGain = null; this.sfxGain = null;
+    this.muted = { music: false, sfx: false };
+    this.started = false; this.timer = null; this.step = 0; this.nextTime = 0; this.rng = new RNG(7);
+    this.mood = this.theme.music || { root: -9, scale: [0, 2, 4, 7, 9], tempo: 76 };
+  }
+  ensure() {
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); return true; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    try {
+      this.ctx = new AC();
+      this.master = this.ctx.createGain(); this.master.gain.value = 0.85; this.master.connect(this.ctx.destination);
+      this.musicGain = this.ctx.createGain(); this.musicGain.gain.value = 0.26; this.musicGain.connect(this.master);
+      this.sfxGain = this.ctx.createGain(); this.sfxGain.gain.value = 0.7; this.sfxGain.connect(this.master);
+      this.startMusic();
+      return true;
+    } catch (e) { this.ctx = null; return false; }
+  }
+  setMuted(kind, v) {
+    this.muted[kind] = v;
+    if (!this.ctx) return;
+    const g = kind === 'music' ? this.musicGain : this.sfxGain;
+    g.gain.setTargetAtTime(v ? 0 : (kind === 'music' ? 0.26 : 0.7), this.ctx.currentTime, 0.08);
+  }
+  /* 单音：type/freq/dur/gain/slide/attack */
+  tone({ type = 'sine', freq = 440, dur = 0.15, gain = 0.25, slide = 0, attack = 0.005, dest = null, when = 0 }) {
+    if (!this.ctx || this.muted.sfx) return;
+    const t0 = this.ctx.currentTime + when;
+    const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq * slide), t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t0 + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(dest || this.sfxGain); o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  noise({ dur = 0.18, gain = 0.2, freq = 1200, q = 1, type = 'lowpass', when = 0 }) {
+    if (!this.ctx || this.muted.sfx) return;
+    const t0 = this.ctx.currentTime + when;
+    const len = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const f = this.ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = this.ctx.createGain(); g.gain.value = gain;
+    src.connect(f); f.connect(g); g.connect(this.sfxGain); src.start(t0);
+  }
+  sfx(name) {
+    if (!this.ctx) return;
+    switch (name) {
+      case 'click': this.tone({ type: 'triangle', freq: 660, dur: 0.06, gain: 0.16, slide: 1.2 }); break;
+      case 'coin': this.tone({ type: 'square', freq: 880, dur: 0.07, gain: 0.1 }); this.tone({ type: 'square', freq: 1320, dur: 0.1, gain: 0.07, when: 0.05 }); break;
+      case 'hit': this.noise({ dur: 0.08, gain: 0.12, freq: 900, type: 'bandpass', q: 1.4 }); break;
+      case 'punch': this.tone({ type: 'sine', freq: 160, dur: 0.12, gain: 0.3, slide: 0.5 }); break;
+      case 'arrow': this.tone({ type: 'sawtooth', freq: 900, dur: 0.08, gain: 0.05, slide: 0.4 }); break;
+      case 'explode': this.noise({ dur: 0.35, gain: 0.32, freq: 320, type: 'lowpass' }); this.tone({ type: 'sine', freq: 90, dur: 0.3, gain: 0.28, slide: 0.4 }); break;
+      case 'build': this.tone({ type: 'triangle', freq: 330, dur: 0.12, gain: 0.18 }); this.tone({ type: 'triangle', freq: 494, dur: 0.16, gain: 0.15, when: 0.07 }); break;
+      case 'upgrade': [523, 659, 784, 1046].forEach((f, i) => this.tone({ type: 'triangle', freq: f, dur: 0.14, gain: 0.12, when: i * 0.06 })); break;
+      case 'spell': this.tone({ type: 'sine', freq: 300, dur: 0.4, gain: 0.2, slide: 2.4 }); this.noise({ dur: 0.3, gain: 0.1, freq: 2000, type: 'highpass' }); break;
+      case 'freeze': this.tone({ type: 'sine', freq: 1400, dur: 0.3, gain: 0.1, slide: 0.6 }); break;
+      case 'merge': this.tone({ type: 'triangle', freq: 440, dur: 0.1, gain: 0.16, slide: 1.6 }); break;
+      case 'win': [523, 659, 784, 1046, 1318].forEach((f, i) => this.tone({ type: 'triangle', freq: f, dur: 0.22, gain: 0.14, when: i * 0.1 })); break;
+      case 'lose': [392, 330, 262, 196].forEach((f, i) => this.tone({ type: 'sawtooth', freq: f, dur: 0.26, gain: 0.09, when: i * 0.13 })); break;
+      case 'warn': this.tone({ type: 'square', freq: 220, dur: 0.18, gain: 0.1, slide: 0.8 }); break;
+      case 'pickup': this.tone({ type: 'sine', freq: 1046, dur: 0.06, gain: 0.1 }); this.tone({ type: 'sine', freq: 1568, dur: 0.08, gain: 0.07, when: 0.03 }); break;
+      default: this.tone({ type: 'sine', freq: 520, dur: 0.06, gain: 0.1 });
+    }
+  }
+  /* 极简程序化配乐：和弦 pad + 五声音阶琶音，按 mood 换调式 */
+  startMusic() {
+    if (!this.ctx || this.timer) return;
+    const m = this.mood;
+    const beat = 60 / (m.tempo || 76);
+    this.nextTime = this.ctx.currentTime + 0.1; this.step = 0;
+    const tick = () => {
+      if (!this.ctx) return;
+      while (this.nextTime < this.ctx.currentTime + 0.6) {
+        if (!this.muted.music) this.playStep(this.step, this.nextTime - this.ctx.currentTime, beat, m);
+        this.nextTime += beat; this.step++;
+      }
+      this.timer = setTimeout(tick, 180);
+    };
+    tick();
+  }
+  playStep(step, when, beat, m) {
+    const scale = m.scale || [0, 2, 4, 7, 9];
+    const root = m.root ?? -9;
+    const bar = Math.floor(step / 8) % 4;
+    const chords = [[0, 4, 7], [-3, 2, 5], [-5, 0, 4], [-1, 2, 7]];
+    const ch = chords[bar];
+    if (step % 8 === 0) {
+      for (const s of ch) this.pad(NOTE(root + s - 12), beat * 4, 0.05, when);
+    }
+    if (step % 2 === 0) {
+      const deg = scale[Math.floor(this.rng.next() * scale.length)];
+      this.arp(NOTE(root + deg + 12), beat * 0.9, 0.035, when);
+    }
+    if (step % 8 === 4) this.arp(NOTE(root + ch[2]), beat * 1.4, 0.03, when);
+  }
+  pad(freq, dur, gain, when) {
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime + when;
+    for (let i = 0; i < 2; i++) {
+      const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+      o.type = i ? 'sine' : 'triangle'; o.frequency.value = freq * (i ? 1.005 : 1);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(gain, t0 + dur * 0.3);
+      g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(this.musicGain); o.start(t0); o.stop(t0 + dur + 0.05);
+    }
+  }
+  arp(freq, dur, gain, when) {
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime + when;
+    const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(this.musicGain); o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+}
+
+/* ------------------------------ 粒子 / 表演 ------------------------------ */
+class Fx {
+  constructor() { this.parts = []; this.texts = []; this.rings = []; this.shakeAmt = 0; this.flashAmt = 0; this.quality = 1; this.rng = new RNG(99); }
+  burst(x, y, n = 8, opts = {}) {
+    const color = opts.color || '#fff';
+    const speed = opts.speed || 180;
+    const count = Math.round(n * this.quality);
+    for (let i = 0; i < count; i++) {
+      const a = opts.angle != null ? opts.angle + (this.rng.next() - 0.5) * (opts.spread || 1.6) : this.rng.next() * Math.PI * 2;
+      const v = speed * (0.4 + this.rng.next() * 0.9);
+      this.parts.push({
+        x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - (opts.up || 0),
+        life: 0, max: (opts.life || 0.5) * (0.6 + this.rng.next() * 0.7),
+        size: (opts.size || 3) * (0.6 + this.rng.next() * 0.8),
+        color, grav: opts.grav != null ? opts.grav : 420, shape: opts.shape || 'dot', drag: opts.drag || 0.99,
+      });
+    }
+  }
+  text(x, y, str, color = '#fff', size = 22, opts = {}) {
+    this.texts.push({ x, y, str: String(str), color, size, life: 0, max: opts.max || 0.9, vy: opts.vy != null ? opts.vy : -60, vx: opts.vx || 0 });
+    if (this.texts.length > 40) this.texts.shift();
+  }
+  ring(x, y, color = '#fff', r = 10, opts = {}) { this.rings.push({ x, y, color, r, r0: r, life: 0, max: opts.max || 0.45, grow: opts.grow || 120 }); }
+  beam() { /* 预留给技能连接线 */ }
+  shake(n) { this.shakeAmt = Math.min(26, this.shakeAmt + n); }
+  flash(a) { this.flashAmt = Math.max(this.flashAmt, a); }
+  update(dt) {
+    for (let i = this.parts.length - 1; i >= 0; i--) {
+      const p = this.parts[i]; p.life += dt;
+      if (p.life >= p.max) { this.parts.splice(i, 1); continue; }
+      p.vx *= p.drag; p.vy = p.vy * p.drag + p.grav * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+    }
+    for (let i = this.texts.length - 1; i >= 0; i--) {
+      const t = this.texts[i]; t.life += dt;
+      if (t.life >= t.max) { this.texts.splice(i, 1); continue; }
+      t.x += t.vx * dt; t.y += t.vy * dt; t.vy += 130 * dt;
+    }
+    for (let i = this.rings.length - 1; i >= 0; i--) {
+      const r = this.rings[i]; r.life += dt;
+      if (r.life >= r.max) { this.rings.splice(i, 1); continue; }
+      r.r += r.grow * dt;
+    }
+    this.shakeAmt *= Math.exp(-7 * dt); if (this.shakeAmt < 0.2) this.shakeAmt = 0;
+    this.flashAmt *= Math.exp(-6 * dt); if (this.flashAmt < 0.01) this.flashAmt = 0;
+  }
+  draw(ctx) {
+    for (const p of this.parts) {
+      const k = 1 - p.life / p.max;
+      ctx.globalAlpha = Math.max(0, k);
+      ctx.fillStyle = p.color;
+      if (p.shape === 'spark') {
+        ctx.fillRect(p.x - p.size * 0.5, p.y - p.size * 0.5, p.size, p.size * 2.2);
+      } else if (p.shape === 'ring') {
+        ctx.strokeStyle = p.color; ctx.lineWidth = Math.max(1, p.size * 0.5);
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1.4 - k), 0, Math.PI * 2); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (0.4 + k * 0.8), 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+    for (const r of this.rings) {
+      const k = 1 - r.life / r.max;
+      ctx.globalAlpha = Math.max(0, k) * 0.8; ctx.strokeStyle = r.color; ctx.lineWidth = 3 * k + 1;
+      ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    for (const t of this.texts) {
+      const k = t.life / t.max;
+      ctx.globalAlpha = Math.max(0, 1 - k * k);
+      ctx.font = `900 ${t.size}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      ctx.textAlign = 'center'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.55)';
+      ctx.strokeText(t.str, t.x, t.y); ctx.fillStyle = t.color; ctx.fillText(t.str, t.x, t.y);
+    }
+    ctx.globalAlpha = 1;
+  }
+  flashDraw(ctx, W, H) {
+    if (this.flashAmt > 0.01) { ctx.fillStyle = `rgba(255,255,255,${this.flashAmt * 0.5})`; ctx.fillRect(0, 0, W, H); }
+  }
+}
+
+/* ------------------------------ 输入 ------------------------------ */
+class Input {
+  constructor(canvas, layout, handlers) {
+    this.canvas = canvas; this.layout = layout; this.h = handlers;
+    this.active = new Map();
+    this.last = { x: 0, y: 0 };
+    const down = (e) => {
+      const p = this.pt(e); this.active.set(e.pointerId ?? 0, p); this.last = p;
+      this.h.onDown?.(p.x, p.y, e);
+      if (e.pointerId != null && canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+      e.preventDefault();
+    };
+    const move = (e) => {
+      const p = this.pt(e); this.last = p;
+      this.h.onMove?.(p.x, p.y, e);
+      e.preventDefault();
+    };
+    const up = (e) => {
+      const p = this.pt(e); this.h.onUp?.(p.x, p.y, e);
+      this.active.delete(e.pointerId ?? 0);
+      e.preventDefault();
+    };
+    canvas.addEventListener('pointerdown', down, { passive: false });
+    canvas.addEventListener('pointermove', move, { passive: false });
+    canvas.addEventListener('pointerup', up, { passive: false });
+    canvas.addEventListener('pointercancel', up, { passive: false });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('keydown', (e) => {
+      if (this.h.onKey) this.h.onKey(e.key, e);
+    });
+    window.addEventListener('resize', () => layout.resize());
+  }
+  pt(e) {
+    const t = e.touches ? e.touches[0] : e;
+    return this.layout.toDesign(t.clientX, t.clientY);
+  }
+}
+
+return { Layout, Sound, Fx, Input };
+})();
+__m["js/render.js"] = (function(){
+/* =========================================================================
+ * render.js —— 通用 Canvas2D 绘制工具：圆角面板 / 文字 / 按钮 / 进度条 /
+ *               星星 / 渐变背景 / 图标
+ * ========================================================================= */
+const { clamp, easeOutCubic } = __m["js/core.js"];
+
+
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+function rect(ctx, x, y, w, h, fill) {
+  ctx.fillStyle = fill; ctx.fillRect(x, y, w, h);
+}
+function panel(ctx, x, y, w, h, o = {}) {
+  const r = o.r == null ? 18 : o.r;
+  ctx.save();
+  if (o.shadow !== false) {
+    ctx.shadowColor = o.shadowColor || 'rgba(0,0,0,.35)';
+    ctx.shadowBlur = o.shadowBlur == null ? 18 : o.shadowBlur;
+    ctx.shadowOffsetY = o.shadowOffsetY == null ? 6 : o.shadowOffsetY;
+  }
+  roundRect(ctx, x, y, w, h, r);
+  ctx.fillStyle = o.fill || 'rgba(16,20,36,.86)';
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  if (o.stroke) { ctx.lineWidth = o.lineWidth || 2; ctx.strokeStyle = o.stroke; ctx.stroke(); }
+  ctx.restore();
+}
+function text(ctx, str, x, y, o = {}) {
+  ctx.save();
+  const size = o.size || 20;
+  const weight = o.weight || 800;
+  ctx.font = `${weight} ${size}px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif`;
+  ctx.textAlign = o.align || 'left';
+  ctx.textBaseline = o.baseline || 'middle';
+  if (o.stroke) {
+    ctx.lineWidth = o.strokeWidth || Math.max(3, size * 0.16);
+    ctx.strokeStyle = o.stroke;
+    ctx.lineJoin = 'round';
+    ctx.strokeText(str, x, y);
+  }
+  if (o.shadow) { ctx.shadowColor = o.shadow; ctx.shadowBlur = o.shadowBlur || 8; ctx.shadowOffsetY = o.shadowY || 2; }
+  ctx.fillStyle = o.color || '#fff';
+  ctx.fillText(str, x, y);
+  ctx.restore();
+}
+function measure(ctx, str, size, weight = 800) {
+  ctx.font = `${weight} ${size}px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif`;
+  return ctx.measureText(str).width;
+}
+function button(ctx, r, label, o = {}) {
+  const pressed = o.pressed ? 2 : 0;
+  const y = r.y + pressed;
+  ctx.save();
+  if (o.shadow !== false) {
+    ctx.shadowColor = 'rgba(0,0,0,.30)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = o.pressed ? 2 : 6;
+  }
+  roundRect(ctx, r.x, y, r.w, r.h, o.r == null ? 16 : o.r);
+  const g = ctx.createLinearGradient(0, y, 0, y + r.h);
+  if (o.disabled) { g.addColorStop(0, 'rgba(90,96,120,.55)'); g.addColorStop(1, 'rgba(60,66,90,.55)'); }
+  else {
+    g.addColorStop(0, o.fill1 || '#ffd76a'); g.addColorStop(1, o.fill2 || '#f2a33c');
+  }
+  ctx.fillStyle = g; ctx.fill();
+  ctx.shadowColor = 'transparent';
+  if (o.stroke !== false) {
+    roundRect(ctx, r.x, y, r.w, r.h, o.r == null ? 16 : o.r);
+    ctx.lineWidth = o.lineWidth || 2;
+    ctx.strokeStyle = o.disabled ? 'rgba(255,255,255,.14)' : (o.stroke || 'rgba(255,255,255,.55)');
+    ctx.stroke();
+  }
+  // 高光
+  if (!o.disabled && o.gloss !== false) {
+    roundRect(ctx, r.x + 6, y + 4, r.w - 12, r.h * 0.38, 10);
+    ctx.fillStyle = 'rgba(255,255,255,.22)'; ctx.fill();
+  }
+  const size = o.size || Math.min(26, r.h * 0.42);
+  text(ctx, label, r.x + r.w / 2, y + r.h / 2 + 1, {
+    size, color: o.disabled ? 'rgba(255,255,255,.45)' : (o.color || '#3a2408'),
+    align: 'center', weight: 900, shadow: o.textShadow === false ? null : null,
+  });
+  ctx.restore();
+}
+function bar(ctx, x, y, w, h, k, o = {}) {
+  k = clamp(k, 0, 1);
+  roundRect(ctx, x, y, w, h, h / 2); ctx.fillStyle = o.bg || 'rgba(0,0,0,.45)'; ctx.fill();
+  if (k > 0) {
+    roundRect(ctx, x, y, Math.max(h, w * k), h, h / 2);
+    const g = ctx.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, o.c1 || '#ff6b57'); g.addColorStop(1, o.c2 || '#ffd76a');
+    ctx.fillStyle = o.color || g; ctx.fill();
+  }
+  if (o.stroke) { roundRect(ctx, x, y, w, h, h / 2); ctx.lineWidth = 1.5; ctx.strokeStyle = o.stroke; ctx.stroke(); }
+}
+function star(ctx, x, y, r, filled, o = {}) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(o.rot || 0);
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5;
+    const rr = i % 2 === 0 ? r : r * 0.45;
+    ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr);
+  }
+  ctx.closePath();
+  if (filled) {
+    const g = ctx.createLinearGradient(0, -r, 0, r);
+    g.addColorStop(0, o.c1 || '#ffe58a'); g.addColorStop(1, o.c2 || '#ffb52e');
+    ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = Math.max(1.5, r * 0.12); ctx.strokeStyle = o.stroke || 'rgba(120,70,0,.55)'; ctx.stroke();
+  } else {
+    ctx.fillStyle = o.empty || 'rgba(255,255,255,.13)'; ctx.fill();
+    ctx.lineWidth = Math.max(1, r * 0.1); ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.stroke();
+  }
+  ctx.restore();
+}
+function gradient(ctx, W, H, colors, vertical = true) {
+  const g = ctx.createLinearGradient(0, 0, vertical ? 0 : W, vertical ? H : 0);
+  colors.forEach((c, i) => g.addColorStop(i / Math.max(1, colors.length - 1), c));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function vignette(ctx, W, H, strength = 0.35) {
+  const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, `rgba(0,0,0,${strength})`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function icon(ctx, kind, x, y, s, color) {
+  ctx.save(); ctx.translate(x, y); ctx.strokeStyle = color || '#fff'; ctx.fillStyle = color || '#fff';
+  ctx.lineWidth = Math.max(2, s * 0.12); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const h = s / 2;
+  if (kind === 'play') { ctx.beginPath(); ctx.moveTo(-h * 0.55, -h); ctx.lineTo(h * 0.9, 0); ctx.lineTo(-h * 0.55, h); ctx.closePath(); ctx.fill(); }
+  else if (kind === 'pause') { ctx.fillRect(-h * 0.62, -h, h * 0.42, h * 2); ctx.fillRect(h * 0.2, -h, h * 0.42, h * 2); }
+  else if (kind === 'back') { ctx.beginPath(); ctx.moveTo(h * 0.35, -h); ctx.lineTo(-h * 0.55, 0); ctx.lineTo(h * 0.35, h); ctx.stroke(); }
+  else if (kind === 'restart') { ctx.beginPath(); ctx.arc(0, 0, h * 0.72, -Math.PI * 0.35, Math.PI * 1.45); ctx.stroke(); ctx.beginPath(); ctx.moveTo(h * 0.68, -h * 0.55); ctx.lineTo(h * 0.92, h * 0.05); ctx.lineTo(h * 0.28, -h * 0.06); ctx.fill(); }
+  else if (kind === 'gear') {
+    ctx.beginPath(); ctx.arc(0, 0, h * 0.34, 0, Math.PI * 2); ctx.stroke();
+    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; ctx.beginPath(); ctx.moveTo(Math.cos(a) * h * 0.52, Math.sin(a) * h * 0.52); ctx.lineTo(Math.cos(a) * h * 0.92, Math.sin(a) * h * 0.92); ctx.stroke(); }
+  }
+  else if (kind === 'sound') { ctx.beginPath(); ctx.moveTo(-h, -h * 0.35); ctx.lineTo(-h * 0.45, -h * 0.35); ctx.lineTo(h * 0.1, -h * 0.8); ctx.lineTo(h * 0.1, h * 0.8); ctx.lineTo(-h * 0.45, h * 0.35); ctx.lineTo(-h, h * 0.35); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.arc(h * 0.18, 0, h * 0.55, -0.9, 0.9); ctx.stroke(); }
+  else if (kind === 'mute') { ctx.beginPath(); ctx.moveTo(-h, -h * 0.3); ctx.lineTo(-h * 0.3, -h * 0.3); ctx.lineTo(h * 0.3, -h * 0.8); ctx.lineTo(h * 0.3, h * 0.8); ctx.lineTo(-h * 0.3, h * 0.3); ctx.lineTo(-h, h * 0.3); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(h * 0.55, -h * 0.4); ctx.lineTo(h * 1.0, h * 0.4); ctx.moveTo(h * 1.0, -h * 0.4); ctx.lineTo(h * 0.55, h * 0.4); ctx.stroke(); }
+  else if (kind === 'lock') { ctx.fillRect(-h * 0.6, -h * 0.05, h * 1.2, h * 0.85); ctx.beginPath(); ctx.arc(0, -h * 0.05, h * 0.4, Math.PI, 0); ctx.stroke(); }
+  else if (kind === 'home') { ctx.beginPath(); ctx.moveTo(-h, 0); ctx.lineTo(0, -h); ctx.lineTo(h, 0); ctx.stroke(); ctx.fillRect(-h * 0.55, 0, h * 1.1, h * 0.75); }
+  else if (kind === 'star') { ctx.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5; const rr = i % 2 ? h * 0.45 : h; ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr); } ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+}
+function entering(t, dur = 0.35) { return easeOutCubic(clamp(t / dur, 0, 1)); }
+
+return { roundRect, rect, panel, text, measure, button, bar, star, gradient, vignette, icon, entering };
+})();
+__m["js/art.js"] = (function(){
+/* =========================================================================
+ * art.js —— 程序化美术：所有画面零外部素材，按主题调色板实时绘制
+ *   sky / 场景 / 角色 / 建筑 / 投射物 / 拾取物
+ * ========================================================================= */
+const { clamp, TAU, hashString, mulberry32 } = __m["js/core.js"];
+
+const { roundRect, bar } = __m["js/render.js"];
+
+
+const DEF = {
+  sky: ['#101427', '#2b1d3a'], ground: '#3a2d3f', groundDark: '#241a2b',
+  accent: '#ffcf5c', accent2: '#ff7a59', hero: '#8fd3ff', hero2: '#3f7ea8',
+  enemy: '#c85a6a', enemy2: '#7a2f42', gold: '#ffd76a', text: '#ffffff',
+  danger: '#ff5d5d', ok: '#62d68f', ui: 'rgba(16,20,36,.86)', ui2: 'rgba(255,255,255,.12)', ink: '#101427',
+};
+
+function pal(theme) {
+  const p = { ...DEF, ...(theme.palette || {}) };
+  if (!Array.isArray(p.sky)) p.sky = DEF.sky;
+  return p;
+}
+
+function makeArt(theme) {
+  const C = pal(theme);
+  const mood = theme.mood || 'night';
+  const seed = hashString(theme.id || 'theme');
+  const rnd = mulberry32(seed);
+
+  function sky(ctx, W, H, t) {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, C.sky[0]); g.addColorStop(0.65, C.sky[1]); g.addColorStop(1, C.groundDark);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    if (mood === 'space') {
+      for (let i = 0; i < 90; i++) {
+        const x = rnd() * W, y = rnd() * H * 0.8, s = rnd() * 2 + 0.4;
+        ctx.globalAlpha = 0.3 + 0.5 * (0.5 + 0.5 * Math.sin(t * 1.2 + i));
+        ctx.fillStyle = '#fff'; ctx.fillRect(x, y, s, s);
+      }
+      ctx.globalAlpha = 1;
+      const gg = ctx.createRadialGradient(W * 0.78, H * 0.22, 4, W * 0.78, H * 0.22, H * 0.34);
+      gg.addColorStop(0, 'rgba(140,190,255,.55)'); gg.addColorStop(1, 'rgba(140,190,255,0)');
+      ctx.fillStyle = gg; ctx.fillRect(0, 0, W, H);
+    } else if (mood === 'night' || mood === 'dusk') {
+      for (let i = 0; i < 46; i++) {
+        const x = rnd() * W, y = rnd() * H * 0.55, s = rnd() * 1.8 + 0.4;
+        ctx.globalAlpha = 0.25 + 0.5 * (0.5 + 0.5 * Math.sin(t * 0.8 + i * 1.7));
+        ctx.fillStyle = '#fff8e0'; ctx.fillRect(x, y, s, s);
+      }
+      ctx.globalAlpha = 1;
+      const mx = W * 0.8, my = H * 0.18, mr = Math.min(W, H) * 0.075;
+      const mg = ctx.createRadialGradient(mx, my, mr * 0.4, mx, my, mr * 2.6);
+      mg.addColorStop(0, 'rgba(255,245,210,.35)'); mg.addColorStop(1, 'rgba(255,245,210,0)');
+      ctx.fillStyle = mg; ctx.fillRect(mx - mr * 3, my - mr * 3, mr * 6, mr * 6);
+      ctx.fillStyle = '#fff2c4'; ctx.beginPath(); ctx.arc(mx, my, mr, 0, TAU); ctx.fill();
+      ctx.fillStyle = C.sky[1]; ctx.beginPath(); ctx.arc(mx - mr * 0.42, my - mr * 0.3, mr * 0.92, 0, TAU); ctx.fill();
+    } else if (mood === 'underwater') {
+      for (let i = 0; i < 26; i++) {
+        const x = rnd() * W, y = H - ((t * (18 + rnd() * 30) + rnd() * H) % H);
+        ctx.globalAlpha = 0.18 + rnd() * 0.2; ctx.fillStyle = '#dffcff';
+        ctx.beginPath(); ctx.arc(x, y, 2 + rnd() * 5, 0, TAU); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      for (let i = 0; i < 5; i++) {
+        ctx.globalAlpha = 0.06; ctx.fillStyle = '#bff3ff';
+        ctx.beginPath(); ctx.moveTo(rnd() * W, 0); ctx.lineTo(W * 0.3 + i * 80, H); ctx.lineTo(W * 0.3 + i * 80 + 80, H); ctx.closePath(); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    return g;
+  }
+
+  function farLayers(ctx, W, H, t, groundY) {
+    const p1 = groundY - H * 0.16;
+    ctx.fillStyle = 'rgba(0,0,0,.18)';
+    ctx.beginPath(); ctx.moveTo(0, groundY);
+    let x = 0;
+    while (x < W) { const w = 120 + rnd() * 200, h = 20 + rnd() * 70; ctx.lineTo(x, p1 - h * 0.3); ctx.lineTo(x + w * 0.5, p1 - h); ctx.lineTo(x + w, p1 - h * 0.2); x += w; }
+    ctx.lineTo(W, groundY); ctx.closePath(); ctx.fill();
+    // 中景建筑/树剪影
+    const base = groundY - 4;
+    x = -40;
+    while (x < W + 60) {
+      const w = 46 + rnd() * 70, h = 50 + rnd() * 120;
+      ctx.fillStyle = 'rgba(0,0,0,.28)';
+      if (mood === 'underwater') {
+        ctx.beginPath(); ctx.ellipse(x + w / 2, base, w * 0.3, h * 0.5, 0, Math.PI, 0); ctx.fill();
+      } else if (mood === 'forest') {
+        ctx.beginPath(); ctx.moveTo(x + w / 2, base - h); ctx.lineTo(x + w, base); ctx.lineTo(x, base); ctx.closePath(); ctx.fill();
+      } else {
+        ctx.fillRect(x, base - h, w, h);
+        if (rnd() < 0.6) { ctx.fillStyle = 'rgba(255,220,140,.35)'; for (let k = 0; k < 4; k++) ctx.fillRect(x + 8 + rnd() * (w - 20), base - h + 10 + rnd() * (h - 24), 5, 7); }
+      }
+      x += w + 12;
+    }
+    // 地平线
+    const gg = ctx.createLinearGradient(0, groundY, 0, H);
+    gg.addColorStop(0, C.ground); gg.addColorStop(1, C.groundDark);
+    ctx.fillStyle = gg; ctx.fillRect(0, groundY, W, H - groundY);
+    ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.fillRect(0, groundY, W, 3);
+  }
+
+  /* 静态背景离屏缓存：标题/结算场景每帧重绘天空+远景是主要开销 */
+  let bgCache = null, bgKey = '';
+  function scene(ctx, W, H, t, o = {}) {
+    const groundY = o.groundY == null ? H * 0.72 : o.groundY;
+    const key = W + 'x' + H + '@' + Math.round(groundY);
+    if (key !== bgKey) {
+      bgCache = null; bgKey = key;
+      const doc = ctx.canvas && ctx.canvas.ownerDocument;
+      if (doc && doc.createElement) {
+        const dpr = Math.min(2, (ctx.getTransform && ctx.getTransform().a) || 1);
+        const c = doc.createElement('canvas');
+        c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+        const g = c.getContext('2d');
+        if (g) {
+          g.setTransform(dpr, 0, 0, dpr, 0, 0);
+          sky(g, W, H, 0);
+          farLayers(g, W, H, 0, groundY);
+          bgCache = c;
+        }
+      }
+    }
+    if (bgCache) { ctx.drawImage(bgCache, 0, 0, W, H); return groundY; }
+    sky(ctx, W, H, t);
+    farLayers(ctx, W, H, t, groundY);
+    return groundY;
+  }
+
+  /* 角色：身体 + 头 + 眼睛 + 武器/配件。kind: hero|enemy|boss，role: melee|ranged|mage|heal|tank */
+  function char(ctx, x, y, s, o = {}) {
+    const kind = o.kind || 'hero';
+    const facing = o.facing == null ? 1 : o.facing;
+    const role = o.role || 'melee';
+    const tier = o.tier || 1;
+    const t = o.t || 0;
+    const flash = o.flash ? 1 : 0;
+    // 受击白闪：直接换配色（原来的 source-atop 叠加会在不透明背景上糊出一个白方块）
+    const body = flash ? '#f2f4ff' : kind === 'enemy' ? C.enemy : kind === 'boss' ? C.enemy2 : C.hero;
+    const body2 = flash ? '#ffffff' : kind === 'enemy' ? C.enemy2 : kind === 'boss' ? C.danger : C.hero2;
+    const hash = hashString((o.name || '') + tier);
+    ctx.save(); ctx.translate(x, y);
+    const breathe = Math.sin(t * 6 + hash) * 0.02;
+    ctx.scale(s * facing, s * (1 + breathe));
+    // 影子
+    ctx.save(); ctx.scale(1 / Math.max(0.2, facing), 1); ctx.globalAlpha = 0.28; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(0, 2, 13, 4.5, 0, 0, TAU); ctx.fill(); ctx.restore();
+    // 腿（走路摆）
+    const walk = o.moving ? Math.sin(t * 9 + hash) * 3 : 0;
+    ctx.fillStyle = body2;
+    ctx.fillRect(-6, -8 + walk * 0.3, 4.5, 9 + walk * 0.4);
+    ctx.fillRect(2, -8 - walk * 0.3, 4.5, 9 - walk * 0.4);
+    // 身体
+    const bh = 18 + tier * 1.6;
+    roundRect(ctx, -9, -8 - bh, 18, bh, 7); ctx.fillStyle = body; ctx.fill();
+    // 披风/护甲
+    ctx.fillStyle = body2;
+    roundRect(ctx, -11, -8 - bh + 4, 22, 5, 2); ctx.fill();
+    if (kind !== 'enemy') { ctx.fillStyle = C.accent; ctx.fillRect(-3, -8 - bh + 4, 6, 3); }
+    // 头
+    const hy = -8 - bh - 8;
+    ctx.beginPath(); ctx.arc(0, hy, 9.5, 0, TAU); ctx.fillStyle = kind === 'enemy' ? body2 : '#f6d3aa'; ctx.fill();
+    if (kind === 'enemy') { ctx.strokeStyle = C.enemy2; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(0, hy, 9.5, 0, TAU); ctx.stroke(); }
+    // 眼睛
+    ctx.fillStyle = kind === 'enemy' ? '#2a0d14' : '#222';
+    ctx.beginPath(); ctx.arc(3.4, hy - 1, 1.5, 0, TAU); ctx.fill();
+    if (kind === 'boss') {
+      ctx.fillStyle = C.gold;
+      ctx.beginPath(); ctx.moveTo(-9, hy - 9); ctx.lineTo(-5, hy - 15); ctx.lineTo(-1, hy - 10); ctx.lineTo(3, hy - 16); ctx.lineTo(7, hy - 9); ctx.closePath(); ctx.fill();
+    } else if (hash % 3 === 0) {
+      ctx.fillStyle = kind === 'enemy' ? C.enemy : C.accent2;
+      roundRect(ctx, -10, hy - 10, 20, 4, 2); ctx.fill();
+    } else if (hash % 3 === 1) {
+      ctx.fillStyle = kind === 'enemy' ? C.enemy2 : C.accent;
+      ctx.beginPath(); ctx.arc(0, hy - 10, 5, Math.PI, 0); ctx.fill();
+    }
+    // 武器
+    ctx.strokeStyle = kind === 'enemy' ? C.enemy2 : C.accent2; ctx.lineWidth = 2.4; ctx.lineCap = 'round';
+    if (role === 'ranged') {
+      ctx.beginPath(); ctx.arc(10, -8 - bh * 0.55, 7, -1.2, 1.2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(13.5, -8 - bh * 0.55 - 7.6); ctx.lineTo(13.5, -8 - bh * 0.55 + 7.6); ctx.stroke();
+    } else if (role === 'mage') {
+      ctx.beginPath(); ctx.moveTo(10, -8 - bh * 0.2); ctx.lineTo(14, -8 - bh - 14); ctx.stroke();
+      ctx.fillStyle = C.accent; ctx.beginPath(); ctx.arc(14, -8 - bh - 16, 3.4, 0, TAU); ctx.fill();
+    } else if (role === 'heal') {
+      ctx.beginPath(); ctx.moveTo(9, -8 - bh * 0.6); ctx.lineTo(17, -8 - bh * 0.6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(13, -8 - bh * 0.6 - 4); ctx.lineTo(13, -8 - bh * 0.6 + 4); ctx.stroke();
+    } else if (role === 'tank') {
+      ctx.fillStyle = C.ui2; roundRect(ctx, 6, -8 - bh * 0.85, 9, bh * 0.8, 4); ctx.fill();
+      ctx.strokeStyle = C.accent; ctx.strokeRect(6, -8 - bh * 0.85, 9, bh * 0.8);
+    } else {
+      ctx.beginPath(); ctx.moveTo(10, -8 - bh * 0.45); ctx.lineTo(19, -8 - bh * 0.95); ctx.stroke();
+    }
+    ctx.restore();
+    if (o.hp != null && o.hp < 1) {
+      const w = Math.max(18, s * 22);
+      ctx.save(); ctx.translate(x - w / 2, y - s * 46); bar(ctx, 0, 0, w, 4, o.hp, { c1: C.danger, c2: C.ok }); ctx.restore();
+    }
+  }
+
+  function building(ctx, x, y, w, h, o = {}) {
+    const lvl = o.level || 1;
+    const t = o.t || 0;
+    const kind = o.kind || 0;
+    ctx.save(); ctx.translate(x, y);
+    ctx.globalAlpha = 0.3; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(0, 0, w * 0.5, 6, 0, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+    // 基座
+    ctx.fillStyle = C.groundDark; roundRect(ctx, -w / 2, -8, w, 8, 3); ctx.fill();
+    // 主体
+    const g = ctx.createLinearGradient(0, -h, 0, 0);
+    g.addColorStop(0, C.ui2); g.addColorStop(1, C.groundDark);
+    roundRect(ctx, -w * 0.42, -h, w * 0.84, h, 6); ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = o.selected ? C.accent : 'rgba(255,255,255,.18)'; roundRect(ctx, -w * 0.42, -h, w * 0.84, h, 6); ctx.stroke();
+    if (kind === 0) { // 兵营
+      ctx.fillStyle = C.accent2; ctx.beginPath(); ctx.moveTo(-w * 0.42, -h); ctx.lineTo(0, -h - 14); ctx.lineTo(w * 0.42, -h); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = C.ink; roundRect(ctx, -w * 0.14, -h * 0.55, w * 0.28, h * 0.55, 3); ctx.fill();
+    } else if (kind === 1) { // 箭塔
+      roundRect(ctx, -w * 0.2, -h - 26, w * 0.4, 26, 3); ctx.fillStyle = C.accent2; ctx.fill();
+      ctx.fillStyle = C.ink; for (let i = 0; i < 3; i++) { ctx.fillRect(-w * 0.2 + i * w * 0.15, -h - 26, w * 0.07, 8); }
+    } else if (kind === 2) { // 法阵
+      ctx.strokeStyle = C.accent; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, -h - 8, 8 + Math.sin(t * 3) * 1.5, 0, TAU); ctx.stroke();
+      ctx.fillStyle = C.accent; ctx.globalAlpha = 0.8; ctx.beginPath(); ctx.arc(0, -h - 8, 3, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+    } else { // 墙
+      ctx.fillStyle = C.groundDark; for (let i = 0; i < 3; i++) ctx.fillRect(-w * 0.45, -h + i * (h / 3), w * 0.9, h / 6);
+    }
+    // 等级角标
+    if (lvl > 1) {
+      ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(w * 0.36, -h + 4, 9, 0, TAU); ctx.fill();
+      ctx.fillStyle = C.ink; ctx.font = '900 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(lvl), w * 0.36, -h + 4);
+    }
+    ctx.restore();
+    if (o.hp != null && o.hp < 1) { ctx.save(); ctx.translate(x - w * 0.42, y - h - 10); bar(ctx, 0, 0, w * 0.84, 4, o.hp); ctx.restore(); }
+    if (o.cd != null) { ctx.save(); ctx.translate(x - w * 0.42, y - 6); bar(ctx, 0, 0, w * 0.84, 3, 1 - o.cd, { c1: C.accent, c2: C.gold }); ctx.restore(); }
+  }
+
+  function projectile(ctx, x, y, o = {}) {
+    const kind = o.kind || 'arrow';
+    ctx.save(); ctx.translate(x, y);
+    if (kind === 'arrow') {
+      const a = o.angle || 0; ctx.rotate(a);
+      ctx.strokeStyle = o.color || C.accent; ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.moveTo(-10, 0); ctx.lineTo(8, 0); ctx.stroke();
+      ctx.fillStyle = o.color || C.accent; ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(5, -4); ctx.lineTo(5, 4); ctx.closePath(); ctx.fill();
+    } else if (kind === 'orb') {
+      const r = o.r || 6;
+      const g = ctx.createRadialGradient(0, 0, 1, 0, 0, r * 2);
+      g.addColorStop(0, '#fff'); g.addColorStop(0.4, o.color || C.accent); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 2, 0, TAU); ctx.fill();
+    } else if (kind === 'shock') {
+      ctx.strokeStyle = o.color || C.hero; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, o.r || 10, 0, TAU); ctx.stroke();
+    } else {
+      ctx.fillStyle = o.color || C.gold;
+      ctx.beginPath(); ctx.arc(0, 0, o.r || 4, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function pickup(ctx, x, y, o = {}) {
+    const t = o.t || 0, r = o.r || 9;
+    ctx.save(); ctx.translate(x, y + Math.sin(t * 3) * 3);
+    ctx.globalAlpha = 0.9;
+    const g = ctx.createRadialGradient(0, 0, 1, 0, 0, r * 2);
+    g.addColorStop(0, o.color || C.gold); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 2, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = o.color || C.gold;
+    if (o.shape === 'gem') { ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(r * 0.8, 0); ctx.lineTo(0, r); ctx.lineTo(-r * 0.8, 0); ctx.closePath(); ctx.fill(); }
+    else if (o.shape === 'star') { ctx.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5; const rr = i % 2 ? r * 0.5 : r; ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr); } ctx.closePath(); ctx.fill(); }
+    else { ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill(); }
+    ctx.restore();
+  }
+
+  function flag(ctx, x, y, color, t) {
+    ctx.save(); ctx.translate(x, y);
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -54); ctx.stroke();
+    ctx.fillStyle = color || C.accent;
+    ctx.beginPath(); ctx.moveTo(0, -54);
+    for (let i = 0; i <= 8; i++) ctx.lineTo(i * 4.4, -54 + Math.sin(t * 5 + i * 0.7) * 2.4 + i * 0.4);
+    for (let i = 8; i >= 0; i--) ctx.lineTo(i * 4.4, -54 + Math.sin(t * 5 + i * 0.7) * 2.4 + 14 - i * 0.4);
+    ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+
+  return { C, mood, sky, scene, char, building, projectile, pickup, flag };
+}
+
+return { makeArt };
+})();
+__m["js/app.js"] = (function(){
+/* =========================================================================
+ * app.js —— 游戏外壳：画布/自适应/固定步长主循环/场景栈（标题-选关-战斗-结算-
+ *           设置-说明）/存档/音频解锁/暂停/调试 API
+ * 规则层（js/rules/*.js）只负责玩法；这里负责所有通用壳层。
+ * ========================================================================= */
+const { clamp, makeSave, RNG, fmt, fmtTime } = __m["js/core.js"];
+
+const { Layout, Sound, Fx, Input } = __m["js/platform.js"];
+
+const { makeArt } = __m["js/art.js"];
+
+const R = __m["js/render.js"];
+
+
+const STEP = 1 / 60;
+
+class App {
+  constructor(canvas, content, createRule) {
+    this.canvas = canvas;
+    this.content = content;
+    this.createRule = createRule;
+    this.cfg = content.config || {};
+    this.portrait = (content.orientation || 'landscape') === 'portrait';
+    this.W = this.portrait ? 720 : 1280;
+    this.H = this.portrait ? 1280 : 720;
+    this.layout = new Layout(canvas, this.W, this.H);
+    this.art = makeArt(content.theme || {});
+    this.audio = new Sound(content.theme || {});
+    this.fx = new Fx();
+    this.save = makeSave(content.slug || 'game', content.saveDefaults || {});
+    this.ctx = canvas.getContext('2d');
+    this.scene = 'title';
+    this.sceneT = 0;
+    this.acc = 0; this.last = 0; this.fps = 60; this.frames = 0; this.fpsT = 0;
+    this.buttons = [];
+    this.toasts = [];
+    this.levelId = 0; this.rule = null; this.pendingResult = null; this.finishing = 0;
+    this.paused = false;
+    this.started = false;
+    this.demoT = 0;
+    this.tipsSeen = this.save.data.tipsSeen || {};
+    this.inputBound = false;
+    this.loop = this.loop.bind(this);
+    this.input = null;
+  }
+  mount() {
+    this.layout.resize();
+    this.layout.applyTransform(this.ctx);
+    this.input = new Input(this.canvas, this.layout, {
+      onDown: (x, y) => this.onDown(x, y),
+      onMove: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('move', x, y); },
+      onUp: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('up', x, y); },
+      onKey: (k) => this.onKey(k),
+    });
+    document.addEventListener('visibilitychange', () => { if (document.hidden && this.scene === 'play') this.setPaused(true); });
+    requestAnimationFrame(this.loop);
+  }
+  begin() {
+    if (this.started) return;
+    this.started = true;
+    if (!this.audio.ensure()) { /* 无音频环境也继续 */ }
+    for (const k of ['music', 'sfx']) this.audio.setMuted(k, !this.save.settings[k]);
+    if (this.save.data.firstRun) { this.save.data.firstRun = false; this.save.flush(); }
+  }
+  /* ---------------------------- 主循环 ---------------------------- */
+  loop(ts) {
+    if (!this.last) this.last = ts;
+    let dt = (ts - this.last) / 1000; this.last = ts;
+    if (dt > 0.25) dt = 0.25;
+    this.frames++; this.fpsT += dt;
+    if (this.fpsT >= 0.5) { this.fps = this.frames / this.fpsT; this.frames = 0; this.fpsT = 0; }
+    this.sceneT += dt; this.demoT += dt;
+    if (this.scene === 'play' && !this.paused) {
+      this.acc += dt;
+      let guard = 0;
+      while (this.acc >= STEP && guard < 4) { this.step(STEP); this.acc -= STEP; guard++; }
+      if (guard >= 4) this.acc = 0;
+    } else {
+      this.acc = 0;
+    }
+    this.fx.update(dt);
+    this.updateToasts(dt);
+    if (this.scene === 'play' && this.rule && !this.paused) {
+      if (this.rule.status !== 'playing' && this.finishing === 0) {
+        this.finishing = 0.0001;
+        this.audio.sfx(this.rule.status === 'won' ? 'win' : 'lose');
+      }
+      if (this.finishing > 0) {
+        this.finishing += dt;
+        if (this.finishing > 1.25) this.finishLevel();
+      }
+    }
+    this.render(dt);
+    requestAnimationFrame(this.loop);
+  }
+  step(dt) {
+    if (!this.rule) return;
+    this.rule.update(dt);
+  }
+  /* 测试用：用机器人策略快进 n 秒（不渲染），返回当前状态 */
+  fastForward(seconds) {
+    if (this.scene !== 'play' || !this.rule) return 'no-play';
+    const steps = Math.round((seconds || 60) * 60);
+    for (let i = 0; i < steps && this.rule.status === 'playing'; i++) {
+      if (this.rule.bot) this.rule.bot(1 / 60);
+      this.step(1 / 60);
+    }
+    return this.rule.status;
+  }
+  /* ---------------------------- 场景 ---------------------------- */
+  go(scene) {
+    this.scene = scene; this.sceneT = 0; this.buttons = [];
+    if (scene !== 'play') { this.paused = false; }
+    if (scene === 'title') this.audio.musicGain && this.audio.musicGain.gain.setTargetAtTime(0.26, this.audio.ctx.currentTime, 0.2);
+  }
+  startLevel(id) {
+    const levels = this.content.levels || [];
+    const lv = levels.find((l) => l.id === id) || levels[0];
+    if (!lv) return false;
+    this.levelId = lv.id;
+    this.finishing = 0; this.pendingResult = null; this.paused = false;
+    const self = this;
+    const svc = {
+      app: this, content: this.content, level: lv, levelId: lv.id,
+      W: this.W, H: this.H, portrait: this.portrait,
+      rng: new RNG(this.content.slug + ':' + lv.id + ':' + (this.cfg.seed || 0)),
+      save: this.save, audio: this.audio, fx: this.fx, art: this.art,
+      finish: (payload) => { if (!self.pendingResult) self.pendingResult = payload || {}; },
+      toast: (msg) => self.toast(msg),
+      replay: () => self.startLevel(self.levelId),
+      next: () => self.nextLevel(),
+    };
+    this.rule = this.createRule(svc);
+    this.rule.init();
+    this.scene = 'play'; this.sceneT = 0; this.buttons = [];
+    this.audio.ensure();
+    return true;
+  }
+  finishLevel() {
+    const win = this.rule && this.rule.status === 'won';
+    const payload = this.pendingResult || (this.rule && this.rule.result && this.rule.result()) || {};
+    const stars = win ? clamp(Math.round(payload.stars == null ? 1 : payload.stars), 1, 3) : 0;
+    if (win) {
+      this.save.complete(this.levelId, stars, payload.score || 0);
+      if (payload.coins) this.save.addCoins(payload.coins);
+      this.save.data.playSec = (this.save.data.playSec || 0) + Math.round(this.sceneT);
+      this.save.flush();
+    }
+    this.result = { win, stars, payload };
+    this.scene = 'result'; this.sceneT = 0; this.buttons = [];
+  }
+  nextLevel() {
+    const levels = this.content.levels || [];
+    const i = levels.findIndex((l) => l.id === this.levelId);
+    if (i >= 0 && i + 1 < levels.length) return this.startLevel(levels[i + 1].id);
+    this.go('levels');
+    return false;
+  }
+  setPaused(v) { this.paused = !!v; this.sceneT = this.sceneT; this.buttons = []; }
+  toast(msg) {
+    if (!msg) return;
+    this.toasts.push({ msg: String(msg), life: 0, max: 2.2 });
+    if (this.toasts.length > 3) this.toasts.shift();
+  }
+  updateToasts(dt) {
+    for (let i = this.toasts.length - 1; i >= 0; i--) { this.toasts[i].life += dt; if (this.toasts[i].life >= this.toasts[i].max) this.toasts.splice(i, 1); }
+  }
+  /* ---------------------------- 输入分发 ---------------------------- */
+  onDown(x, y) {
+    this.begin();
+    for (let i = this.buttons.length - 1; i >= 0; i--) {
+      const b = this.buttons[i];
+      if (b.disabled) continue;
+      if (x >= b.r.x && x <= b.r.x + b.r.w && y >= b.r.y && y <= b.r.y + b.r.h) {
+        this.audio.sfx('click');
+        this.vibrate(8);
+        b.fn();
+        return;
+      }
+    }
+    if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('down', x, y);
+  }
+  onKey(k) {
+    if (this.scene === 'play') {
+      if (k === 'Escape' || k === 'p' || k === 'P') { this.setPaused(!this.paused); }
+      if (this.rule && !this.paused) this.rule.pointer('key', 0, 0, k);
+    } else if (k === 'Escape' || k === 'Backspace') {
+      if (this.scene === 'levels' || this.scene === 'settings' || this.scene === 'howto') this.go('title');
+      if (this.scene === 'result') this.go('levels');
+    } else if (k === 'Enter' || k === ' ') {
+      if (this.scene === 'title') this.startLevel(this.save.data.unlocked || 1);
+      if (this.scene === 'result' && this.result) { this.result.win ? this.nextLevel() : this.startLevel(this.levelId); }
+    }
+  }
+  vibrate(ms) { try { if (this.save.settings.haptic && navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+
+  /* ---------------------------- 绘制 ---------------------------- */
+  render(dt) {
+    const ctx = this.ctx, W = this.W, H = this.H;
+    this.layout.applyTransform(ctx);
+    ctx.clearRect(0, 0, W, H);
+    this.buttons = [];
+    if (this.scene === 'title') this.drawTitle(ctx);
+    else if (this.scene === 'levels') this.drawLevels(ctx);
+    else if (this.scene === 'play') this.drawPlay(ctx);
+    else if (this.scene === 'result') this.drawResult(ctx);
+    else if (this.scene === 'settings') this.drawSettings(ctx);
+    else if (this.scene === 'howto') this.drawHowto(ctx);
+    if (this.paused && this.scene === 'play') this.drawPause(ctx);
+    this.drawToasts(ctx);
+    this.fx.flashDraw(ctx, W, H);
+  }
+  mkButton(ctx, r, label, fn, o = {}) {
+    this.buttons.push({ r, fn, disabled: !!o.disabled });
+    R.button(ctx, r, label, o);
+  }
+  drawBg(ctx, groundY) {
+    this.art.scene(ctx, this.W, this.H, this.demoT, { groundY });
+  }
+  drawTitle(ctx) {
+    const W = this.W, H = this.H, t = this.demoT, P = this.portrait;
+    const groundY = P ? H * 0.42 : H * 0.60;
+    this.drawBg(ctx, groundY);
+    const pg = ctx.createLinearGradient(0, 0, 0, H);
+    pg.addColorStop(0, 'rgba(0,0,0,.10)'); pg.addColorStop(1, 'rgba(0,0,0,.55)');
+    ctx.fillStyle = pg; ctx.fillRect(0, 0, W, H);
+    // 角色展示（在标题与按钮之间）
+    const art = this.art, n = 4;
+    for (let i = 0; i < n; i++) {
+      const x = W * (0.5 + (i - (n - 1) / 2) * (P ? 0.19 : 0.15));
+      const y = groundY + (i % 2 ? 0 : 8);
+      art.char(ctx, x, y, (P ? 2.1 : 1.8) + (i === 1 ? 0.25 : 0), {
+        kind: i === 2 ? 'enemy' : 'hero', role: ['melee', 'ranged', 'mage', 'heal'][i],
+        facing: i === 2 ? -1 : 1, t: t + i, name: 'showcase' + i, moving: true,
+      });
+    }
+    const titleSize = Math.min(W * 0.085, 92);
+    ctx.save();
+    ctx.font = `900 ${titleSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const y = P ? H * 0.16 : H * 0.21;
+    ctx.lineWidth = titleSize * 0.14; ctx.strokeStyle = 'rgba(8,10,20,.85)'; ctx.lineJoin = 'round';
+    ctx.strokeText(this.content.title, W / 2, y);
+    const tg = ctx.createLinearGradient(0, y - titleSize / 2, 0, y + titleSize / 2);
+    tg.addColorStop(0, '#fff6d8'); tg.addColorStop(0.5, '#ffd76a'); tg.addColorStop(1, '#ff9f43');
+    ctx.fillStyle = tg; ctx.fillText(this.content.title, W / 2, y);
+    ctx.restore();
+    R.text(ctx, this.content.tagline || this.content.subtitle || '', W / 2, y + titleSize * 0.86, {
+      size: Math.min(P ? 20 : 23, W * 0.02), color: 'rgba(255,255,255,.85)', align: 'center', weight: 600,
+    });
+    // 开始按钮
+    const bw = Math.min(W * (P ? 0.62 : 0.34), 460), bh = Math.min(86, H * 0.12);
+    const bx = W / 2 - bw / 2, by = P ? H * 0.50 : H * 0.66;
+    const nextId = Math.min(this.save.data.unlocked || 1, (this.content.levels || []).length || 1);
+    const label = (this.save.data.totalClears || 0) > 0 ? `继续游戏 · 第${nextId}关` : '开始游戏';
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, label, () => this.startLevel(nextId), { size: Math.min(30, bh * 0.38) });
+    // 次级按钮
+    const sw = Math.min(W * (P ? 0.26 : 0.17), 220), sh = Math.min(58, H * 0.085), gap = 16;
+    const y2 = by + bh + (P ? 28 : 18);
+    const labels = [['关卡', () => this.go('levels')], ['玩法', () => this.go('howto')], ['设置', () => this.go('settings')]];
+    const totalW = labels.length * sw + (labels.length - 1) * gap;
+    labels.forEach(([lb, fn], i) => {
+      const x = W / 2 - totalW / 2 + i * (sw + gap);
+      this.mkButton(ctx, { x, y: y2, w: sw, h: sh }, lb, fn, {
+        fill1: 'rgba(255,255,255,.20)', fill2: 'rgba(255,255,255,.10)', color: '#fff', stroke: 'rgba(255,255,255,.35)', size: Math.min(22, sh * 0.4),
+      });
+    });
+    R.text(ctx, '程序化美术 / 合成音频 / 本地存档', W / 2, H - (P ? 40 : 20), { size: 14, color: 'rgba(255,255,255,.45)', align: 'center', weight: 500 });
+  }
+  /* 选关 */
+  drawLevels(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    const titleY = this.portrait ? 76 : 64;
+    R.text(ctx, '选择关卡', W / 2, titleY, { size: 38, align: 'center', color: '#fff', stroke: 'rgba(0,0,0,.5)' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const stars = this.save.totalStars(), maxStars = (this.content.levels || []).length * 3;
+    R.text(ctx, `★ ${stars} / ${maxStars}`, W - 26, titleY, { size: 20, align: 'right', color: '#ffd76a' });
+    const levels = this.content.levels || [];
+    const chapters = this.content.chapters || [{ name: '关卡', levels: levels.map((l) => l.id) }];
+    const top = this.portrait ? 120 : 104;
+    const bottomPad = 24;
+    const rowH = Math.min(this.portrait ? 200 : 108, (H - top - bottomPad) / chapters.length);
+    chapters.forEach((ch, ci) => {
+      const y0 = top + ci * rowH;
+      R.text(ctx, `${ci + 1}. ${ch.name}`, 30, y0 + 14, { size: Math.min(20, rowH * 0.22), color: 'rgba(255,255,255,.7)', weight: 700 });
+      const perRow = this.portrait ? 5 : Math.min(10, ch.levels.length);
+      const cellW = Math.min(this.portrait ? 118 : 104, (W - 60) / perRow);
+      const cellH = Math.min(cellW, rowH - 34);
+      ch.levels.forEach((id, i) => {
+        const col = i % perRow, row = Math.floor(i / perRow);
+        const x = 30 + col * ((W - 60) / perRow) + ((W - 60) / perRow - cellW) / 2;
+        const y = y0 + 28 + row * (cellH + 10);
+        this.levelCell(ctx, levels.find((l) => l.id === id) || { id, name: '第' + id + '关' }, x, y, cellW, cellH);
+      });
+      if (this.portrait && ci === 0) { /* 保持布局 */ }
+    });
+  }
+  levelCell(ctx, lv, x, y, w, h) {
+    const unlocked = this.save.isUnlocked(lv.id);
+    const st = this.save.starOf(lv.id);
+    const r = { x, y, w, h };
+    const isBoss = !!lv.boss;
+    R.panel(ctx, x, y, w, h, {
+      r: 14, fill: unlocked ? (isBoss ? 'rgba(120,40,60,.85)' : 'rgba(32,40,64,.9)') : 'rgba(24,26,36,.75)',
+      stroke: st > 0 ? 'rgba(255,215,106,.65)' : 'rgba(255,255,255,.12)', shadowBlur: 10,
+    });
+    if (!unlocked) {
+      R.icon(ctx, 'lock', x + w / 2, y + h * 0.42, Math.min(w, h) * 0.28, 'rgba(255,255,255,.3)');
+      R.text(ctx, '未解锁', x + w / 2, y + h * 0.78, { size: Math.min(13, w * 0.16), color: 'rgba(255,255,255,.35)', align: 'center' });
+    } else {
+      R.text(ctx, String(lv.id), x + w / 2, y + h * 0.38, { size: Math.min(26, w * 0.3), color: '#fff', align: 'center', weight: 900 });
+      R.text(ctx, lv.name || '', x + w / 2, y + h * 0.64, { size: Math.min(11, w * 0.137), color: 'rgba(255,255,255,.62)', align: 'center', weight: 600 });
+      for (let i = 0; i < 3; i++) R.star(ctx, x + w / 2 + (i - 1) * Math.min(17, w * 0.2), y + h * 0.84, Math.min(7, w * 0.09), i < st);
+    }
+    this.buttons.push({ r, fn: () => { if (unlocked) this.startLevel(lv.id); } });
+  }
+  /* 战斗场景 */
+  drawPlay(ctx) {
+    const W = this.W, H = this.H, rule = this.rule;
+    if (!rule) return;
+    rule.drawWorld(ctx, this.demoT);
+    this.fx.draw(ctx);
+    // 关卡横幅
+    const intro = clamp(1 - this.sceneT / 1.6, 0, 1);
+    if (intro > 0) {
+      const lv = this.content.levels.find((l) => l.id === this.levelId) || {};
+      ctx.globalAlpha = Math.min(1, intro * 1.6);
+      R.text(ctx, `第 ${this.levelId} 关`, W / 2, H * 0.16, { size: 22, align: 'center', color: 'rgba(255,255,255,.8)', weight: 700 });
+      R.text(ctx, lv.name || '', W / 2, H * 0.16 + 34, { size: 34, align: 'center', color: '#fff', stroke: 'rgba(0,0,0,.6)' });
+      ctx.globalAlpha = 1;
+    }
+    rule.drawHUD(ctx, this.demoT);
+    // 暂停按钮：始终最后画，保证在各玩法 HUD 之上可点
+    const pr = { x: W - 74, y: 16, w: 56, h: 56 };
+    R.panel(ctx, pr.x, pr.y, pr.w, pr.h, { r: 14, fill: 'rgba(10,14,24,.62)', stroke: 'rgba(255,255,255,.2)' });
+    R.icon(ctx, 'pause', pr.x + pr.w / 2, pr.y + pr.h / 2, 22, '#fff');
+    this.buttons.push({ r: pr, fn: () => this.setPaused(true) });
+  }
+  /* 暂停 */
+  drawPause(ctx) {
+    const W = this.W, H = this.H;
+    ctx.fillStyle = 'rgba(6,8,16,.66)'; ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W * 0.46, 520), ph = Math.min(H * 0.62, 520);
+    const px = W / 2 - pw / 2, py = H / 2 - ph / 2;
+    R.panel(ctx, px, py, pw, ph, { fill: 'rgba(20,24,44,.97)', stroke: 'rgba(255,255,255,.2)', r: 24 });
+    R.text(ctx, '已暂停', W / 2, py + 58, { size: 34, align: 'center', color: '#fff' });
+    const bw = pw * 0.66, bh = 60, bx = W / 2 - bw / 2;
+    let by = py + 116;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '继续', () => this.setPaused(false), { size: 26 });
+    by += bh + 14;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '重开本关', () => this.startLevel(this.levelId), {
+      fill1: 'rgba(255,255,255,.2)', fill2: 'rgba(255,255,255,.1)', color: '#fff', stroke: 'rgba(255,255,255,.3)', size: 24,
+    });
+    by += bh + 14;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '返回选关', () => { this.setPaused(false); this.go('levels'); }, {
+      fill1: 'rgba(255,255,255,.2)', fill2: 'rgba(255,255,255,.1)', color: '#fff', stroke: 'rgba(255,255,255,.3)', size: 24,
+    });
+    by += bh + 26;
+    // 音乐/音效开关
+    const tw = (pw - 60) / 2;
+    this.toggle(ctx, px + 20, by, tw, 50, '音乐', this.save.settings.music, (v) => { this.save.setSetting('music', v); this.audio.setMuted('music', !v); });
+    this.toggle(ctx, px + 40 + tw, by, tw, 50, '音效', this.save.settings.sfx, (v) => { this.save.setSetting('sfx', v); this.audio.setMuted('sfx', !v); });
+  }
+  toggle(ctx, x, y, w, h, label, on, fn) {
+    R.panel(ctx, x, y, w, h, { r: 12, fill: on ? 'rgba(255,215,106,.16)' : 'rgba(255,255,255,.06)', stroke: on ? 'rgba(255,215,106,.6)' : 'rgba(255,255,255,.16)', shadow: false });
+    R.text(ctx, label, x + 14, y + h / 2, { size: 18, color: '#fff', weight: 700 });
+    const kr = { x: x + w - 62, y: y + 9, w: 46, h: h - 18 };
+    R.roundRect(ctx, kr.x, kr.y, kr.w, kr.h, kr.h / 2); ctx.fillStyle = on ? '#ffd76a' : 'rgba(255,255,255,.2)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(kr.x + (on ? kr.w - kr.h / 2 : kr.h / 2), kr.y + kr.h / 2, kr.h / 2 - 3, 0, Math.PI * 2);
+    ctx.fillStyle = on ? '#241a06' : '#888'; ctx.fill();
+    this.buttons.push({ r: { x, y, w, h }, fn: () => fn(!on) });
+  }
+  /* 结算 */
+  drawResult(ctx) {
+    const W = this.W, H = this.H, res = this.result || { win: false, stars: 0, payload: {} };
+    const t = this.sceneT;
+    this.drawBg(ctx, H * 0.78);
+    ctx.fillStyle = 'rgba(6,8,16,.62)'; ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W * 0.56, 620), ph = Math.min(H * 0.78, 640);
+    const px = W / 2 - pw / 2, py = H / 2 - ph / 2 + 10;
+    const pop = R.entering(t, 0.4);
+    ctx.save(); ctx.translate(W / 2, py + ph / 2); ctx.scale(0.9 + pop * 0.1, 0.9 + pop * 0.1); ctx.translate(-W / 2, -(py + ph / 2));
+    R.panel(ctx, px, py, pw, ph, { fill: 'rgba(22,26,46,.97)', stroke: res.win ? 'rgba(255,215,106,.5)' : 'rgba(255,93,93,.4)', r: 26, shadowBlur: 32 });
+    R.text(ctx, res.win ? '通关！' : '再战一次', W / 2, py + 62, { size: 42, align: 'center', color: res.win ? '#ffd76a' : '#ff8a8a', stroke: 'rgba(0,0,0,.5)' });
+    R.text(ctx, `第 ${this.levelId} 关`, W / 2, py + 100, { size: 18, align: 'center', color: 'rgba(255,255,255,.55)' });
+    for (let i = 0; i < 3; i++) {
+      const st = res.win && i < res.stars;
+      const delay = 0.35 + i * 0.16;
+      const k = clamp((t - delay) / 0.3, 0, 1);
+      if (k <= 0) continue;
+      ctx.save(); ctx.translate(W / 2 + (i - 1) * 74, py + 170); ctx.scale(0.4 + k * 0.9, 0.4 + k * 0.9); ctx.globalAlpha = k;
+      R.star(ctx, 0, 0, 30, st, { c1: '#fff3b0', c2: '#ffb52e' });
+      ctx.restore();
+    }
+    const p = res.payload || {};
+    const rows = [
+      ['得分', fmt(p.score || 0)],
+      [this.content.resultKillLabel || '击杀', fmt(p.kills || 0)],
+      ['用时', fmtTime(p.time || this.sceneT)],
+    ];
+    rows.forEach(([k1, v], i) => {
+      const y = py + 234 + i * 30;
+      R.text(ctx, k1, px + pw * 0.22, y, { size: 18, color: 'rgba(255,255,255,.55)', weight: 600 });
+      R.text(ctx, v, px + pw * 0.78, y, { size: 20, color: '#fff', align: 'right', weight: 800 });
+    });
+    const bw = pw * 0.68, bh = 62, bx = W / 2 - bw / 2;
+    let by = py + ph - 200;
+    if (res.win) {
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '下一关', () => this.nextLevel(), { size: 26 });
+      by += bh + 12;
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: 52 }, '重玩', () => this.startLevel(this.levelId), {
+        fill1: 'rgba(255,255,255,.18)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 22,
+      });
+      by += 52 + 12;
+    } else {
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh + 8 }, '再来一次', () => this.startLevel(this.levelId), { size: 26 });
+      by += bh + 20;
+    }
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: 48 }, '返回选关', () => this.go('levels'), {
+      fill1: 'rgba(255,255,255,.06)', fill2: 'rgba(255,255,255,.03)', color: 'rgba(255,255,255,.8)', stroke: 'rgba(255,255,255,.16)', size: 20,
+    });
+    ctx.restore();
+  }
+  /* 设置 */
+  drawSettings(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    R.text(ctx, '设置', W / 2, 66, { size: 38, align: 'center', color: '#fff' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const w = Math.min(W * 0.62, 620), x = W / 2 - w / 2;
+    let y = 140;
+    this.toggle(ctx, x, y, w, 62, '音乐', this.save.settings.music, (v) => { this.save.setSetting('music', v); this.audio.setMuted('music', !v); }); y += 74;
+    this.toggle(ctx, x, y, w, 62, '音效', this.save.settings.sfx, (v) => { this.save.setSetting('sfx', v); this.audio.setMuted('sfx', !v); }); y += 74;
+    this.toggle(ctx, x, y, w, 62, '震动反馈', this.save.settings.haptic, (v) => this.save.setSetting('haptic', v)); y += 90;
+    this.mkButton(ctx, { x, y, w, h: 56 }, '清除存档', () => { if (typeof confirm === 'function' && confirm('确定清空本机进度？')) { this.save.reset(); this.toast('已清除'); } }, {
+      fill1: 'rgba(255,93,93,.35)', fill2: 'rgba(200,40,60,.35)', color: '#fff', stroke: 'rgba(255,120,120,.5)', size: 22,
+    });
+    y += 76;
+    R.text(ctx, '存档只保存在本机浏览器；换设备不会同步。', W / 2, y, { size: 15, align: 'center', color: 'rgba(255,255,255,.45)', weight: 500 });
+    R.text(ctx, '程序化美术 + 程序化音乐音效', W / 2, y + 26, { size: 15, align: 'center', color: 'rgba(255,255,255,.35)', weight: 500 });
+  }
+  /* 说明 */
+  drawHowto(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    R.text(ctx, '玩法说明', W / 2, 66, { size: 38, align: 'center', color: '#fff' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const help = this.content.help || {};
+    const w = Math.min(W * 0.74, 820), x = W / 2 - w / 2;
+    R.panel(ctx, x, 116, w, H - 168, { r: 20, fill: 'rgba(255,255,255,.055)', stroke: 'rgba(255,255,255,.12)', shadow: false });
+    let y = 152;
+    R.text(ctx, '目标', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of wrapLines(ctx, help.goal || '', w - 56, 18)) { R.text(ctx, line, x + 28, y, { size: 18, color: '#fff', weight: 600 }); y += 28; }
+    y += 14;
+    R.text(ctx, '操作', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of help.controls || []) { R.text(ctx, '· ' + line, x + 28, y, { size: 17, color: 'rgba(255,255,255,.85)', weight: 600 }); y += 28; }
+    y += 14;
+    R.text(ctx, '小提示', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of help.tips || []) {
+      for (const l2 of wrapLines(ctx, '· ' + line, w - 56, 17)) { R.text(ctx, l2, x + 28, y, { size: 17, color: 'rgba(255,255,255,.7)', weight: 500 }); y += 26; }
+    }
+  }
+  drawToasts(ctx) {
+    const W = this.W;
+    this.toasts.forEach((tt, i) => {
+      const k = tt.life / tt.max;
+      const a = k < 0.15 ? k / 0.15 : k > 0.75 ? (1 - k) / 0.25 : 1;
+      ctx.globalAlpha = Math.max(0, Math.min(1, a));
+      const w = Math.min(W * 0.6, R.measure(ctx, tt.msg, 20, 700) + 56);
+      const y = this.H * 0.2 + i * 52;
+      R.panel(ctx, W / 2 - w / 2, y, w, 44, { r: 22, fill: 'rgba(10,14,24,.86)', stroke: 'rgba(255,215,106,.35)', shadowBlur: 8 });
+      R.text(ctx, tt.msg, W / 2, y + 22, { size: 19, align: 'center', color: '#ffe9b0', weight: 700 });
+      ctx.globalAlpha = 1;
+    });
+  }
+}
+
+function wrapLines(ctx, str, maxW, size) {
+  const out = [];
+  let line = '';
+  for (const ch of String(str)) {
+    const test = line + ch;
+    if (R.measure(ctx, test, size, 600) > maxW && line) { out.push(line); line = ch; }
+    else line = test;
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+return { App };
+})();
+__m["js/content.js"] = (function(){
+/* =========================================================================
+ * content.js —— 全部玩法内容数据（由「游戏工坊」生成，可直接手改）
+ * 主题：中式僵尸 · 基因：horde · 关卡：30
+ * 改完运行：node tools/build-single.mjs && node tools/check.mjs
+ * ========================================================================= */
+
+const CONTENT = {
+  "slug": "horde-i3z5x2",
+  "genre": "horde",
+  "title": "僵尸围山门",
+  "subtitle": "中式僵尸 · 法师的冒险",
+  "tagline": "造屋自动派兵，与来敌在一条战线上对冲；资源滚雪球，法术救场。",
+  "orientation": "landscape",
+  "config": {
+    "seed": 1095070646,
+    "maxLevel": 30
+  },
+  "theme": {
+    "id": "jiangshi",
+    "name": "中式僵尸",
+    "mood": "night",
+    "keywords": [
+      "僵尸",
+      "道士",
+      "符",
+      "道观",
+      "山门",
+      "中式",
+      "民俗",
+      "鬼",
+      "冥",
+      "尸",
+      "江南",
+      "古风",
+      "武侠",
+      "僵尸围城",
+      "jiangshi",
+      "zombie",
+      "taoist"
+    ],
+    "palette": {
+      "sky": [
+        "#0d1024",
+        "#2a1633"
+      ],
+      "ground": "#3b2b3f",
+      "groundDark": "#211827",
+      "accent": "#ffcf5c",
+      "accent2": "#ff7a59",
+      "hero": "#8fd3ff",
+      "hero2": "#3f7ea8",
+      "enemy": "#c85a6a",
+      "enemy2": "#6f2436",
+      "gold": "#ffd76a",
+      "danger": "#ff5d5d",
+      "ok": "#62d68f",
+      "ui": "rgba(14,18,32,.86)",
+      "ui2": "rgba(255,255,255,.12)",
+      "ink": "#0d1024",
+      "text": "#ffffff"
+    },
+    "music": {
+      "root": -9,
+      "scale": [
+        0,
+        2,
+        4,
+        7,
+        9
+      ],
+      "tempo": 78
+    },
+    "vocab": {
+      "hero": [
+        "道童",
+        "弩手",
+        "法师",
+        "医师",
+        "剑客",
+        "符师"
+      ],
+      "enemy": [
+        "游尸",
+        "跳尸",
+        "铁尸",
+        "巫尸",
+        "尸傀",
+        "飞僵"
+      ],
+      "boss": [
+        "跳尸王",
+        "血尸",
+        "铜甲尸将",
+        "飞僵将军",
+        "尸母",
+        "旱魃"
+      ],
+      "building": [
+        "草庐",
+        "箭楼",
+        "法阵",
+        "医庐",
+        "符箓堂",
+        "天师殿"
+      ],
+      "item": [
+        "铜钱",
+        "符纸",
+        "纸人",
+        "糯米",
+        "桃木剑",
+        "铃铛",
+        "灯笼",
+        "罗盘"
+      ],
+      "place": [
+        "荒村",
+        "山门",
+        "乱葬岗",
+        "鬼市",
+        "尸王殿",
+        "后山"
+      ],
+      "power": [
+        "天雷",
+        "五雷正法",
+        "三昧真火",
+        "冰封",
+        "回春",
+        "符阵"
+      ],
+      "currency": "铜钱"
+    }
+  },
+  "chapters": [
+    {
+      "name": "荒村",
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    {
+      "name": "山门",
+      "levels": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12
+      ]
+    },
+    {
+      "name": "乱葬岗",
+      "levels": [
+        13,
+        14,
+        15,
+        16,
+        17,
+        18
+      ]
+    },
+    {
+      "name": "鬼市",
+      "levels": [
+        19,
+        20,
+        21,
+        22,
+        23,
+        24
+      ]
+    },
+    {
+      "name": "尸王殿",
+      "levels": [
+        25,
+        26,
+        27,
+        28,
+        29,
+        30
+      ]
+    }
+  ],
+  "help": {
+    "goal": "造屋自动派兵，挡住从右侧涌来的游尸潮，守住山门。漏怪会啃山门，耐久归零就失败。",
+    "controls": [
+      "点击下方建筑卡：消耗铜钱建造；再点同类型卡片升级",
+      "点击右下角法术图标，再点战场释放（天雷 / 五雷正法 / 三昧真火）",
+      "击杀敌人获得铜钱，通关获得星级"
+    ],
+    "tips": [
+      "前排先造草庐扛线，后排箭楼与法阵输出",
+      "铜钱优先升 1~2 个主力建筑，别摊太薄",
+      "Boss 波留好大招与急救"
+    ]
+  },
+  "defs": {
+    "buildings": [
+      {
+        "id": "barracks",
+        "name": "草庐",
+        "role": "melee",
+        "cost": 60,
+        "interval": 4.2,
+        "desc": "派出近战单位"
+      },
+      {
+        "id": "archery",
+        "name": "箭楼",
+        "role": "ranged",
+        "cost": 80,
+        "interval": 4.6,
+        "desc": "远程持续输出"
+      },
+      {
+        "id": "mage",
+        "name": "法阵",
+        "role": "mage",
+        "cost": 110,
+        "interval": 5.6,
+        "desc": "范围伤害"
+      },
+      {
+        "id": "heal",
+        "name": "医庐",
+        "role": "heal",
+        "cost": 90,
+        "interval": 6,
+        "desc": "治疗前排单位"
+      }
+    ],
+    "units": [
+      {
+        "role": "melee",
+        "name": "道童",
+        "hp": 62,
+        "atk": 13,
+        "range": 26,
+        "cd": 0.75,
+        "speed": 62,
+        "radius": 11
+      },
+      {
+        "role": "ranged",
+        "name": "弩手",
+        "hp": 42,
+        "atk": 11,
+        "range": 190,
+        "cd": 0.95,
+        "speed": 52,
+        "radius": 10
+      },
+      {
+        "role": "mage",
+        "name": "法师",
+        "hp": 38,
+        "atk": 19,
+        "range": 165,
+        "cd": 1.5,
+        "speed": 46,
+        "radius": 10,
+        "aoe": 46
+      },
+      {
+        "role": "heal",
+        "name": "医师",
+        "hp": 46,
+        "atk": 0,
+        "range": 150,
+        "cd": 1.4,
+        "speed": 48,
+        "radius": 10,
+        "heal": 16
+      }
+    ],
+    "enemies": [
+      {
+        "id": "walker",
+        "name": "游尸",
+        "hp": 52,
+        "atk": 9,
+        "speed": 34,
+        "range": 24,
+        "cd": 0.9,
+        "gold": 7,
+        "radius": 11
+      },
+      {
+        "id": "runner",
+        "name": "跳尸",
+        "hp": 34,
+        "atk": 8,
+        "speed": 66,
+        "range": 22,
+        "cd": 0.8,
+        "gold": 8,
+        "radius": 10
+      },
+      {
+        "id": "brute",
+        "name": "铁尸",
+        "hp": 150,
+        "atk": 18,
+        "speed": 24,
+        "range": 26,
+        "cd": 1.1,
+        "gold": 18,
+        "radius": 15
+      },
+      {
+        "id": "boss",
+        "name": "跳尸王",
+        "hp": 900,
+        "atk": 34,
+        "speed": 22,
+        "range": 34,
+        "cd": 1.2,
+        "gold": 120,
+        "radius": 22,
+        "boss": true
+      }
+    ],
+    "spells": [
+      {
+        "id": "thunder",
+        "name": "天雷",
+        "cd": 15,
+        "radius": 132,
+        "dmg": 95,
+        "unlock": 1
+      },
+      {
+        "id": "frost",
+        "name": "五雷正法",
+        "cd": 20,
+        "radius": 150,
+        "dmg": 26,
+        "slow": 0.45,
+        "slowT": 3.2,
+        "unlock": 4
+      },
+      {
+        "id": "heal",
+        "name": "三昧真火",
+        "cd": 24,
+        "radius": 9999,
+        "heal": 45,
+        "unlock": 7
+      }
+    ]
+  },
+  "levels": [
+    {
+      "id": 1,
+      "chapter": 1,
+      "name": "荒村前线",
+      "startGold": 150,
+      "baseHp": 120,
+      "scale": {
+        "hp": 0.82,
+        "atk": 0.85,
+        "speed": 0.95
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 18,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 31,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 2,
+      "chapter": 1,
+      "name": "山门夜",
+      "startGold": 150,
+      "baseHp": 120,
+      "scale": {
+        "hp": 0.86,
+        "atk": 0.879,
+        "speed": 0.958
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 18,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 31,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 3,
+      "chapter": 1,
+      "name": "乱葬岗哨站",
+      "startGold": 150,
+      "baseHp": 120,
+      "scale": {
+        "hp": 0.899,
+        "atk": 0.909,
+        "speed": 0.965
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 18,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 31,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 4,
+      "chapter": 1,
+      "name": "鬼市山谷",
+      "startGold": 175,
+      "baseHp": 120,
+      "scale": {
+        "hp": 0.939,
+        "atk": 0.938,
+        "speed": 0.973
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 18,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 31,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 5,
+      "chapter": 1,
+      "name": "跳尸王",
+      "startGold": 175,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.099,
+        "atk": 0.967,
+        "speed": 0.98
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 18,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 31,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 44,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 57,
+          "groups": [
+            {
+              "type": "boss",
+              "count": 1,
+              "gap": 1,
+              "delay": 0
+            }
+          ],
+          "boss": true
+        }
+      ],
+      "boss": true
+    },
+    {
+      "id": 6,
+      "chapter": 2,
+      "name": "后山关隘",
+      "startGold": 175,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.018,
+        "atk": 0.997,
+        "speed": 0.988
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 18,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 31,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 44,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 7,
+      "chapter": 2,
+      "name": "荒村废墟",
+      "startGold": 175,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.058,
+        "atk": 1.026,
+        "speed": 0.996
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 8,
+      "chapter": 2,
+      "name": "山门阵地",
+      "startGold": 175,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.098,
+        "atk": 1.055,
+        "speed": 1.003
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 9,
+      "chapter": 2,
+      "name": "乱葬岗入口",
+      "startGold": 175,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.137,
+        "atk": 1.084,
+        "speed": 1.011
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 10,
+      "chapter": 2,
+      "name": "血尸",
+      "startGold": 175,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.297,
+        "atk": 1.114,
+        "speed": 1.018
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "boss",
+              "count": 1,
+              "gap": 1,
+              "delay": 0
+            }
+          ],
+          "boss": true
+        }
+      ],
+      "boss": true
+    },
+    {
+      "id": 11,
+      "chapter": 3,
+      "name": "尸王殿最后防线",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.217,
+        "atk": 1.143,
+        "speed": 1.026
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 12,
+      "chapter": 3,
+      "name": "后山决战",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.256,
+        "atk": 1.172,
+        "speed": 1.033
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 7,
+              "gap": 0.85,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 13,
+      "chapter": 3,
+      "name": "荒村前线",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.296,
+        "atk": 1.202,
+        "speed": 1.041
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 14,
+      "chapter": 3,
+      "name": "山门夜",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.336,
+        "atk": 1.231,
+        "speed": 1.049
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 15,
+      "chapter": 3,
+      "name": "铜甲尸将",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.495,
+        "atk": 1.26,
+        "speed": 1.056
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 80,
+          "groups": [
+            {
+              "type": "boss",
+              "count": 1,
+              "gap": 1,
+              "delay": 0
+            }
+          ],
+          "boss": true
+        }
+      ],
+      "boss": true
+    },
+    {
+      "id": 16,
+      "chapter": 4,
+      "name": "鬼市山谷",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.415,
+        "atk": 1.29,
+        "speed": 1.064
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 17,
+      "chapter": 4,
+      "name": "尸王殿桥头",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.454,
+        "atk": 1.319,
+        "speed": 1.071
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 18,
+      "chapter": 4,
+      "name": "后山关隘",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.494,
+        "atk": 1.348,
+        "speed": 1.079
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 19,
+      "chapter": 4,
+      "name": "荒村废墟",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.534,
+        "atk": 1.378,
+        "speed": 1.087
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 20,
+      "chapter": 4,
+      "name": "飞僵将军",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.693,
+        "atk": 1.407,
+        "speed": 1.094
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 80,
+          "groups": [
+            {
+              "type": "boss",
+              "count": 1,
+              "gap": 1,
+              "delay": 0
+            }
+          ],
+          "boss": true
+        }
+      ],
+      "boss": true
+    },
+    {
+      "id": 21,
+      "chapter": 5,
+      "name": "乱葬岗入口",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.613,
+        "atk": 1.436,
+        "speed": 1.102
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 22,
+      "chapter": 5,
+      "name": "鬼市深处",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.653,
+        "atk": 1.466,
+        "speed": 1.109
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 23,
+      "chapter": 5,
+      "name": "尸王殿最后防线",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.692,
+        "atk": 1.495,
+        "speed": 1.117
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 80,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 24,
+      "chapter": 5,
+      "name": "后山决战",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.732,
+        "atk": 1.524,
+        "speed": 1.124
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 80,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 25,
+      "chapter": 5,
+      "name": "尸母",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.892,
+        "atk": 1.553,
+        "speed": 1.132
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 80,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 95,
+          "groups": [
+            {
+              "type": "boss",
+              "count": 1,
+              "gap": 1,
+              "delay": 0
+            }
+          ],
+          "boss": true
+        }
+      ],
+      "boss": true
+    },
+    {
+      "id": 26,
+      "chapter": 6,
+      "name": "山门夜",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.811,
+        "atk": 1.583,
+        "speed": 1.14
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 3,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 80,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 27,
+      "chapter": 6,
+      "name": "乱葬岗哨站",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.851,
+        "atk": 1.612,
+        "speed": 1.147
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 80,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 28,
+      "chapter": 6,
+      "name": "鬼市山谷",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.891,
+        "atk": 1.641,
+        "speed": 1.155
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 80,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 29,
+      "chapter": 6,
+      "name": "尸王殿桥头",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 1.93,
+        "atk": 1.671,
+        "speed": 1.162
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 80,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        }
+      ],
+      "boss": false
+    },
+    {
+      "id": 30,
+      "chapter": 6,
+      "name": "旱魃",
+      "startGold": 200,
+      "baseHp": 120,
+      "scale": {
+        "hp": 2.09,
+        "atk": 1.7,
+        "speed": 1.17
+      },
+      "waves": [
+        {
+          "at": 5,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 20,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 50,
+          "groups": [
+            {
+              "type": "walker",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 80,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 0
+            },
+            {
+              "type": "walker",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 2.2
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.85,
+              "delay": 4.4
+            }
+          ]
+        },
+        {
+          "at": 95,
+          "groups": [
+            {
+              "type": "boss",
+              "count": 1,
+              "gap": 1,
+              "delay": 0
+            }
+          ],
+          "boss": true
+        }
+      ],
+      "boss": true
+    }
+  ],
+  "saveDefaults": {}
+};
+
+return { CONTENT };
+})();
+__m["js/rules/horde.js"] = (function(){
+/* =========================================================================
+ * rules/horde.js —— 增量自走塔防：造屋派兵 / 尸潮对冲 / 法术支援
+ * 纯逻辑 update() + 纯绘制 drawWorld()/drawHUD()，可在 Node 里无头跑（tools/sim.mjs）
+ * ========================================================================= */
+const { clamp, RNG, dist } = __m["js/core.js"];
+
+
+function createRule(svc) {
+  const { content, level, W, H, audio, fx } = svc;
+  const art = svc.art;
+  const D = content.defs;
+  const rng = svc.rng;
+  const playerScale = 1 + (level.id - 1) * 0.045;
+  const groundY = Math.round(H * 0.735);
+  const baseX = 92;
+
+  const enemies = [], units = [], shots = [];
+  const slots = [0, 1, 2, 3].map((i) => ({ i, x: 208 + i * 94, y: groundY, building: null }));
+  const state = {
+    gold: level.startGold, baseHp: level.baseHp, baseHpMax: level.baseHp,
+    time: 0, kills: 0, spawned: 0, done: 0, winT: 0,
+    spells: D.spells.map((s) => ({ ...s, cd: 0, cdMax: s.cd })),
+    selSpell: null, lastWave: 0, shakeT: 0,
+  };
+  const schedule = [];
+  (level.waves || []).forEach((w, wi) => {
+    (w.groups || []).forEach((g) => {
+      for (let i = 0; i < (g.count || 0); i++) {
+        schedule.push({ t: (w.at || 0) + (g.delay || 0) + i * (g.gap || 0.8), type: g.type, wave: wi + 1, boss: !!w.boss });
+      }
+    });
+    state.lastWave = Math.max(state.lastWave, w.at || 0);
+  });
+  schedule.sort((a, b) => a.t - b.t);
+  state.spawnIdx = 0;
+
+  const enemyDef = (id) => D.enemies.find((e) => e.id === id) || D.enemies[0];
+  const unitDef = (role) => D.units.find((u) => u.role === role) || D.units[0];
+  const bldDef = (id) => D.buildings.find((b) => b.id === id) || D.buildings[0];
+
+  /* ------------------------------ 动作 ------------------------------ */
+  function toast(msg) { svc.toast?.(msg); }
+  function addGold(n) { state.gold += n; }
+  function spend(n) { if (state.gold < n) return false; state.gold -= n; return true; }
+
+  function build(typeId) {
+    const def = bldDef(typeId);
+    const slot = slots.find((s) => !s.building);
+    if (!slot) { toast('位置已满，点卡片升级'); return false; }
+    if (!spend(def.cost)) { toast('铜钱不足'); audio.sfx('warn'); return false; }
+    slot.building = { type: def.id, role: def.role, level: 1, timer: rng.range(0.45, 1.1), hp: 1 };
+    audio.sfx('build');
+    fx.burst(slot.x, groundY - 30, 10, { color: '#ffd76a', up: 80 });
+    fx.text(slot.x, groundY - 138, '建造 ' + def.name, '#ffe9b0', 18);
+    return true;
+  }
+  function upgrade(slot) {
+    const b = slot.building; if (!b) return false;
+    if (b.level >= 5) { toast('已满级'); return false; }
+    const def = bldDef(b.type);
+    const cost = Math.round(def.cost * (0.65 + 0.5 * b.level));
+    if (!spend(cost)) { toast('铜钱不足（升级 ' + cost + '）'); audio.sfx('warn'); return false; }
+    b.level++; audio.sfx('upgrade');
+    fx.burst(slot.x, groundY - 40, 14, { color: '#ffd76a', up: 120 });
+    fx.text(slot.x, groundY - 146, 'Lv.' + b.level, '#ffe9b0', 20);
+    return true;
+  }
+  function cardAction(typeId) {
+    const def = bldDef(typeId);
+    const empty = slots.find((s) => !s.building);
+    if (empty) return build(typeId);
+    const same = slots.filter((s) => s.building && s.building.type === typeId).sort((a, b) => a.building.level - b.building.level)[0];
+    if (same) return upgrade(same);
+    // 没有同类型：升级任意最低级建筑
+    const low = slots.filter((s) => s.building).sort((a, b) => a.building.level - b.building.level)[0];
+    if (low) return upgrade(low);
+    return false;
+  }
+  function cast(spellId, x, y) {
+    const sp = state.spells.find((s) => s.id === spellId);
+    if (!sp || sp.cd > 0) { toast('法术冷却中'); return false; }
+    if (sp.id === 'heal') {
+      for (const u of units) u.hp = Math.min(u.maxHp, u.hp + sp.heal * playerScale);
+      state.baseHp = Math.min(state.baseHpMax, state.baseHp + sp.heal * playerScale);
+      sp.cd = sp.cdMax;
+      audio.sfx('spell'); fx.flash(0.25); fx.text(W / 2, groundY - 180, '回春', '#8fffc0', 26);
+      return true;
+    }
+    sp.cd = sp.cdMax;
+    audio.sfx(sp.id === 'frost' ? 'freeze' : 'spell');
+    fx.ring(x, y, sp.id === 'frost' ? '#9fe8ff' : '#ffd76a', 12, { grow: 460, max: 0.5 });
+    fx.burst(x, y, 26, { color: sp.id === 'frost' ? '#bfeaff' : '#ffcf5c', up: 40, speed: 280 });
+    fx.shake(sp.id === 'frost' ? 4 : 9);
+    for (const e of enemies) {
+      if (dist(x, y, e.x, groundY - 20) <= sp.radius) {
+        if (sp.dmg) hurtEnemy(e, sp.dmg * playerScale, 'spell');
+        if (sp.slow) { e.slowT = sp.slowT; e.slowF = sp.slow; }
+      }
+    }
+    fx.text(x, y - 20, sp.name, sp.id === 'frost' ? '#bfeaff' : '#ffe9b0', 24);
+    return true;
+  }
+
+  /* ------------------------------ 单位 ------------------------------ */
+  function spawnUnit(slot) {
+    const b = slot.building;
+    const def = unitDef(b.role);
+    const lvMul = 1 + 0.25 * (b.level - 1);
+    const j = rng.range(-6, 6);
+    units.push({
+      role: b.role, name: def.name, x: slot.x + 26, y: groundY - 10 + j,
+      hp: def.hp * playerScale * lvMul, maxHp: def.hp * playerScale * lvMul,
+      atk: (def.atk || 0) * playerScale * lvMul, range: def.range, cd: def.cd, atkCd: rng.range(0, 0.3),
+      speed: def.speed, radius: def.radius, aoe: def.aoe || 0, heal: (def.heal || 0) * playerScale * lvMul,
+      tier: b.level, flash: 0, facing: 1, dead: false, moving: true,
+    });
+  }
+  function spawnEnemy(type, boss) {
+    const def = enemyDef(type);
+    const hp = def.hp * level.scale.hp * (boss ? 1.25 : 1);
+    enemies.push({
+      type: def.id, name: def.name, boss: !!def.boss || !!boss,
+      x: W - 20 - rng.range(0, 90), y: groundY - 10 + rng.range(-7, 7),
+      hp, maxHp: hp, atk: def.atk * level.scale.atk, speed: def.speed * level.scale.speed,
+      range: def.range, cd: def.cd, atkCd: rng.range(0, 0.5), gold: def.gold, radius: def.radius,
+      slowT: 0, slowF: 1, flash: 0, facing: -1, dead: false, moving: true,
+    });
+    state.spawned++;
+  }
+  function hurtEnemy(e, dmg, kind) {
+    e.hp -= dmg; e.flash = 0.12;
+    if (kind !== 'dot') {
+      fx.text(e.x, e.y - 44, String(Math.round(dmg)), kind === 'spell' ? '#ffe08a' : '#fff', kind === 'spell' ? 22 : 16);
+      if (kind !== 'aoe') audio.sfx('hit');
+    }
+    if (e.hp <= 0 && !e.dead) {
+      e.dead = true;
+      state.kills++;
+      const g = Math.round(e.gold * (1 + 0.02 * (level.id - 1)));
+      addGold(g);
+      audio.sfx(e.boss ? 'explode' : 'coin');
+      fx.burst(e.x, e.y - 20, e.boss ? 40 : 12, { color: e.boss ? '#ff9f43' : '#c85a6a', up: 60, speed: e.boss ? 320 : 180 });
+      fx.text(e.x, e.y - 40, '+' + g, '#ffd76a', e.boss ? 26 : 17);
+      if (e.boss) fx.shake(12);
+    }
+  }
+  function hurtBase(e) {
+    state.baseHp -= e.atk * 1.2;
+    fx.shake(2.5); audio.sfx('punch');
+    if (state.baseHp <= 0) { state.baseHp = 0; /* 失败在 update 末尾统一判定 */ }
+  }
+
+  /* ------------------------------ 更新 ------------------------------ */
+  function update(dt) {
+    if (rule.status !== 'playing') return;
+    state.time += dt;
+    // 出生队列
+    while (state.spawnIdx < schedule.length && schedule[state.spawnIdx].t <= state.time) {
+      const s = schedule[state.spawnIdx++];
+      spawnEnemy(s.type, s.boss);
+    }
+    // 建筑产兵
+    for (const slot of slots) {
+      const b = slot.building; if (!b) continue;
+      b.timer -= dt;
+      if (b.timer <= 0) {
+        const def = bldDef(b.type);
+        b.timer = def.interval * Math.pow(0.92, b.level - 1);
+        spawnUnit(slot);
+      }
+    }
+    // 单位
+    for (const u of units) {
+      if (u.dead) continue;
+      u.flash = Math.max(0, u.flash - dt);
+      u.atkCd -= dt;
+      u.moving = false;
+      if (u.role === 'heal') {
+        const hurt = units.filter((a) => a.hp < a.maxHp).sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
+        if (hurt && Math.abs(hurt.x - u.x) < u.range) {
+          if (u.atkCd <= 0) { u.atkCd = u.cd; hurt.hp = Math.min(hurt.maxHp, hurt.hp + u.heal); fx.burst(hurt.x, hurt.y - 30, 5, { color: '#8fffc0', up: 50 }); }
+        } else {
+          u.x += u.speed * 0.5 * dt; u.moving = true;
+          if (u.x > W - 80) u.x = W - 80;
+        }
+        continue;
+      }
+      let target = null, best = 1e9;
+      for (const e of enemies) {
+        if (e.dead) continue;
+        const d = Math.abs(e.x - u.x) - e.radius - u.radius;
+        if (d < best) { best = d; target = e; }
+      }
+      if (target) {
+        const inRange = best <= u.range;
+        if (inRange) {
+          if (u.atkCd <= 0) {
+            u.atkCd = u.cd;
+            if (u.range > 100) {
+              shots.push({ x: u.x + 14, y: u.y - 26, target, dmg: u.atk, aoe: u.aoe, color: u.role === 'mage' ? '#c79bff' : '#ffe9b0', kind: u.role === 'mage' ? 'orb' : 'arrow', speed: 460 });
+              audio.sfx(u.role === 'mage' ? 'spell' : 'arrow');
+            } else {
+              hurtEnemy(target, u.atk, 'melee');
+              fx.burst(target.x - 8, target.y - 26, 4, { color: '#fff', speed: 90 });
+            }
+          }
+        } else {
+          const dir = Math.sign(target.x - u.x) || 1;
+          u.x += dir * u.speed * dt; u.moving = true; u.facing = dir;
+          if (u.x < 40) u.x = 40; if (u.x > W - 30) u.x = W - 30;
+        }
+      } else {
+        u.x += u.speed * dt; u.moving = true; u.facing = 1;
+        if (u.x > W - 60) u.x = W - 60;
+      }
+    }
+    // 敌人
+    for (const e of enemies) {
+      if (e.dead) continue;
+      e.flash = Math.max(0, e.flash - dt);
+      e.atkCd -= dt;
+      if (e.slowT > 0) { e.slowT -= dt; } else { e.slowF = 1; }
+      e.moving = true;
+      let target = null, best = 1e9;
+      for (const u of units) {
+        if (u.dead) continue;
+        const d = Math.abs(u.x - e.x) - u.radius - e.radius;
+        if (d < best) { best = d; target = u; }
+      }
+      if (target && best <= Math.max(e.range, 260)) {
+        if (best <= e.range) {
+          if (e.atkCd <= 0) {
+            e.atkCd = e.cd;
+            target.hp -= e.atk; target.flash = 0.15;
+            fx.burst(target.x, target.y - 26, 4, { color: '#ff8a8a', speed: 80 });
+            audio.sfx('hit');
+            if (target.hp <= 0) { target.dead = true; fx.burst(target.x, target.y - 24, 12, { color: '#8fd3ff', up: 60 }); }
+          }
+        } else {
+          e.x -= e.speed * e.slowF * dt; e.facing = -1;
+        }
+      } else {
+        e.x -= e.speed * e.slowF * dt; e.facing = -1;
+        if (e.x <= baseX + 26) {
+          e.x = baseX + 26;
+          if (e.atkCd <= 0) { e.atkCd = e.cd; hurtBase(e); }
+        }
+      }
+    }
+    // 投射物
+    for (let i = shots.length - 1; i >= 0; i--) {
+      const s = shots[i];
+      const tx = s.target && !s.target.dead ? s.target.x : s.x + 20;
+      const ty = s.target && !s.target.dead ? s.target.y - 26 : s.y;
+      const dx = tx - s.x, dy = ty - s.y, d = Math.hypot(dx, dy);
+      const step = s.speed * dt;
+      if (d <= step || !s.target || s.target.dead) {
+        if (s.target && !s.target.dead) {
+          if (s.aoe) {
+            for (const e of enemies) if (!e.dead && dist(tx, ty, e.x, e.y - 16) <= s.aoe) hurtEnemy(e, s.dmg, 'aoe');
+            fx.ring(tx, ty, '#c79bff', 8, { grow: 160, max: 0.35 });
+          } else hurtEnemy(s.target, s.dmg, 'ranged');
+        }
+        shots.splice(i, 1); continue;
+      }
+      s.x += (dx / d) * step; s.y += (dy / d) * step; s.angle = Math.atan2(dy, dx);
+    }
+    // 清理
+    for (let i = units.length - 1; i >= 0; i--) if (units[i].dead) units.splice(i, 1);
+    for (let i = enemies.length - 1; i >= 0; i--) if (enemies[i].dead) {
+      const e = enemies[i]; enemies.splice(i, 1);
+      if (e.boss) { fx.flash(0.5); fx.shake(14); }
+    }
+    // 法术冷却
+    for (const sp of state.spells) if (sp.cd > 0) sp.cd = Math.max(0, sp.cd - dt);
+    // 胜负
+    if (state.baseHp <= 0) {
+      rule.status = 'lost';
+      svc.finish({ stars: 0, score: state.kills * 10, coins: 0, kills: state.kills, time: state.time });
+      audio.sfx('lose');
+      return;
+    }
+    const allSpawned = state.spawnIdx >= schedule.length;
+    if (allSpawned && enemies.length === 0) {
+      state.winT += dt;
+      if (state.winT > 0.7) {
+        rule.status = 'won';
+        const hpRatio = state.baseHp / state.baseHpMax;
+        const stars = hpRatio >= 0.98 ? 3 : hpRatio >= 0.55 ? 2 : 1;
+        svc.finish({ stars, score: state.kills * 10 + Math.round(state.gold) + Math.round(hpRatio * 400), coins: 24 + level.id * 5, kills: state.kills, time: state.time });
+        audio.sfx('win');
+      }
+    }
+  }
+
+  /* ------------------------------ 绘制 ------------------------------ */
+  function drawWorld(ctx, t) {
+    const shake = fx.shakeAmt;
+    ctx.save();
+    if (shake > 0.4) ctx.translate((rng.next() - 0.5) * shake, (rng.next() - 0.5) * shake);
+    if (art) art.scene(ctx, W, H, t, { groundY });
+    else { ctx.fillStyle = '#141428'; ctx.fillRect(0, 0, W, H); }
+    // 山门
+    drawBase(ctx, t);
+    // 建筑位/建筑
+    for (const s of slots) {
+      if (!s.building) {
+        ctx.save();
+        ctx.setLineDash([7, 7]); ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.2)';
+        rounded(ctx, s.x - 42, groundY - 96, 84, 96, 10); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.strokeStyle = 'rgba(255,215,106,.45)'; ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.moveTo(s.x - 12, groundY - 52); ctx.lineTo(s.x + 12, groundY - 52);
+        ctx.moveTo(s.x, groundY - 64); ctx.lineTo(s.x, groundY - 40); ctx.stroke();
+        ctx.restore();
+      } else {
+        const def = bldDef(s.building.type);
+        const kind = D.buildings.findIndex((b) => b.id === def.id);
+        if (art) art.building(ctx, s.x, groundY, 84, 92, { kind, level: s.building.level, t, cd: clamp(s.building.timer / def.interval, 0, 1) });
+      }
+    }
+    // 实体按 y 排序
+    const ents = [];
+    for (const u of units) ents.push({ y: u.y, kind: 'u', o: u });
+    for (const e of enemies) ents.push({ y: e.y, kind: 'e', o: e });
+    ents.sort((a, b) => a.y - b.y);
+    for (const it of ents) {
+      const o = it.o;
+      if (art) art.char(ctx, o.x, o.y, o.boss ? 2.5 : it.kind === 'u' ? 1.5 : 1.35, {
+        kind: it.kind === 'u' ? 'hero' : (o.boss ? 'boss' : 'enemy'),
+        role: it.kind === 'u' ? o.role : 'melee',
+        name: o.name, tier: it.kind === 'u' ? o.tier : 1, facing: o.facing, t, flash: o.flash > 0,
+        hp: o.hp / o.maxHp, moving: o.moving,
+      });
+      else { ctx.fillStyle = it.kind === 'u' ? '#8fd3ff' : '#c85a6a'; ctx.fillRect(o.x - 6, o.y - 20, 12, 20); }
+    }
+    // 投射物
+    if (art) for (const s of shots) art.projectile(ctx, s.x, s.y, { kind: s.kind, angle: s.angle, color: s.color });
+    ctx.restore();
+  }
+  function drawBase(ctx, t) {
+    const x = baseX, y = groundY;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.beginPath(); ctx.ellipse(x, y, 54, 9, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#4a3352'; ctx.fillRect(x - 44, y - 96, 16, 96);
+    ctx.fillStyle = '#5c3f66'; ctx.fillRect(x + 30, y - 96, 16, 96);
+    ctx.fillStyle = '#6d4a77'; ctx.fillRect(x - 52, y - 108, 104, 16);
+    ctx.fillStyle = '#ffcf5c'; ctx.beginPath(); ctx.moveTo(x - 60, y - 108); ctx.lineTo(x, y - 136); ctx.lineTo(x + 60, y - 108); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fillRect(x - 18, y - 78, 36, 78);
+    ctx.font = '900 22px "PingFang SC", sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#ffe9b0';
+    ctx.fillText('山门', x, y - 62);
+    // 山门血量
+    ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(x - 48, y + 12, 96, 8);
+    const ratio = state.baseHp / state.baseHpMax;
+    ctx.fillStyle = ratio > 0.5 ? '#62d68f' : ratio > 0.25 ? '#ffd76a' : '#ff5d5d';
+    ctx.fillRect(x - 48, y + 12, 96 * clamp(ratio, 0, 1), 8);
+    ctx.restore();
+    if (art) art.flag(ctx, x + 40, y - 96, '#ff7a59', t);
+  }
+  function drawHUD(ctx, t) {
+    const pad = 18;
+    // 顶部资源
+    ctx.save();
+    ctx.fillStyle = 'rgba(8,10,20,.55)';
+    rounded(ctx, pad, 14, 190, 46, 23); ctx.fill();
+    ctx.fillStyle = '#ffd76a'; ctx.beginPath(); ctx.arc(pad + 26, 37, 12, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1a1206'; ctx.font = '900 15px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('金', pad + 26, 42);
+    ctx.fillStyle = '#fff'; ctx.font = '900 24px "PingFang SC", sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(String(Math.floor(state.gold)), pad + 48, 45);
+    // 波次
+    const waveNow = Math.min(level.waves.length, 1 + level.waves.filter((w) => state.time >= w.at).length - 1);
+    const waveTxt = `第 ${Math.max(1, waveNow + (state.spawnIdx >= schedule.length && enemies.length === 0 ? 1 : 0))} / ${level.waves.length} 波`;
+    ctx.font = '800 20px "PingFang SC", sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(8,10,20,.55)'; rounded(ctx, W / 2 - 78, 14, 156, 42, 21); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillText(waveTxt, W / 2, 41);
+    // 剩余敌人
+    ctx.font = '700 15px "PingFang SC", sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.6)';
+    ctx.fillText(`场上 ${enemies.length} · 击杀 ${state.kills}`, W / 2, 72);
+    ctx.restore();
+    // 建筑卡
+    this.ui.cards.forEach((c, i) => {
+      const def = bldDef(c.type);
+      const afford = state.gold >= def.cost;
+      const hasEmpty = slots.some((s) => !s.building);
+      const any = slots.find((s) => s.building && s.building.type === c.type);
+      const maxed = any && any.building.level >= 5 && !hasEmpty;
+      ctx.save();
+      ctx.fillStyle = 'rgba(10,14,26,.82)';
+      rounded(ctx, c.x, c.y, c.w, c.h, 14); ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = afford && !maxed ? 'rgba(255,215,106,.55)' : 'rgba(255,255,255,.14)';
+      rounded(ctx, c.x, c.y, c.w, c.h, 14); ctx.stroke();
+      if (art) art.building(ctx, c.x + 26, c.y + c.h - 12, 42, 50, { kind: i, level: 1, t });
+      ctx.fillStyle = maxed ? 'rgba(255,255,255,.4)' : '#fff';
+      ctx.font = '800 17px "PingFang SC", sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText(def.name, c.x + 52, c.y + 26);
+      if (any) {
+        ctx.fillStyle = '#ffd76a'; ctx.font = '800 14px "PingFang SC", sans-serif';
+        ctx.fillText('Lv.' + any.building.level + ' / 5', c.x + 52, c.y + 48);
+      }
+      const upCost = any ? Math.round(def.cost * (0.65 + 0.5 * any.building.level)) : def.cost;
+      ctx.fillStyle = !maxed && afford ? '#ffd76a' : '#ff7a7a';
+      ctx.font = '800 15px "PingFang SC", sans-serif';
+      ctx.fillText(maxed ? '已满级' : (hasEmpty && !any ? def.cost : upCost) + ' 铜钱', c.x + 52, c.y + 70);
+      ctx.restore();
+    });
+    // 法术按钮
+    state.spells.forEach((sp, i) => {
+      const b = this.ui.spells[i];
+      const ready = sp.cd <= 0;
+      ctx.save();
+      ctx.fillStyle = ready ? 'rgba(20,26,46,.9)' : 'rgba(12,14,24,.85)';
+      ctx.beginPath(); ctx.arc(b.x + b.r, b.y + b.r, b.r, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = state.selSpell === sp.id ? 4 : 2;
+      ctx.strokeStyle = state.selSpell === sp.id ? '#ffd76a' : ready ? 'rgba(255,215,106,.55)' : 'rgba(255,255,255,.16)';
+      ctx.beginPath(); ctx.arc(b.x + b.r, b.y + b.r, b.r, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = ready ? '#fff' : 'rgba(255,255,255,.35)';
+      ctx.font = '900 26px "PingFang SC", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(sp.name, b.x + b.r, b.y + b.r + 1);
+      if (!ready) {
+        ctx.fillStyle = 'rgba(0,0,0,.55)';
+        ctx.beginPath(); ctx.moveTo(b.x + b.r, b.y + b.r);
+        ctx.arc(b.x + b.r, b.y + b.r, b.r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (sp.cd / sp.cdMax));
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = '800 18px sans-serif';
+        ctx.fillText(String(Math.ceil(sp.cd)), b.x + b.r, b.y + b.r);
+      }
+      ctx.restore();
+    });
+    // 选中法术提示
+    if (state.selSpell) {
+      ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.font = '700 17px "PingFang SC", sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('点击战场释放「' + (state.spells.find((s) => s.id === state.selSpell)?.name || '') + '」', W / 2, H - 28);
+    }
+  }
+  function rounded(ctx, x, y, w, h, r) {
+    const rr = Math.min(r, w / 2, h / 2);
+    ctx.beginPath(); ctx.moveTo(x + rr, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rr); ctx.arcTo(x + w, y + h, x, y + h, rr);
+    ctx.arcTo(x, y + h, x, y, rr); ctx.arcTo(x, y, x + w, y, rr); ctx.closePath();
+  }
+
+  /* ------------------------------ 输入 ------------------------------ */
+  function pointer(kind, x, y) {
+    if (kind === 'key') return;
+    if (kind !== 'down') return;
+    const ui = rule.ui;
+    for (const b of ui.spells) {
+      if (dist(x, matchY(y, b.y), b.x + b.r, b.y + b.r) <= b.r + 6) {
+        const sp = state.spells.find((s) => s.id === b.id);
+        if (sp.cd > 0) { toast('冷却中'); return; }
+        state.selSpell = state.selSpell === b.id ? null : b.id;
+        if (state.selSpell === 'heal') { cast('heal', 0, 0); state.selSpell = null; }
+        return;
+      }
+    }
+    for (const c of ui.cards) {
+      if (x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h) { cardAction(c.type); return; }
+    }
+    if (state.selSpell) { cast(state.selSpell, x, y); state.selSpell = null; return; }
+  }
+  function matchY(y) { return y; }
+
+  /* ------------------------------ 机器人（无头仿真） ------------------------------ */
+  let botT = 0;
+  function bot(dt) {
+    if (rule.status !== 'playing') return;
+    botT += dt;
+    if (botT < 0.35) return;
+    botT = 0;
+    const empty = slots.find((s) => !s.building);
+    const counts = {};
+    for (const s of slots) if (s.building) counts[s.building.type] = (counts[s.building.type] || 0) + 1;
+    const order = ['barracks', 'archery', 'mage', 'heal'];
+    if (empty) {
+      let pickType = order.find((id) => !(counts[id] >= 1)) || order.sort((a, b) => bldDef(a).cost - bldDef(b).cost)[0];
+      if (state.gold >= bldDef(pickType).cost) build(pickType);
+    } else if (state.gold > 180) {
+      const low = slots.filter((s) => s.building && s.building.level < 5).sort((a, b) => a.building.level - b.building.level)[0];
+      if (low) upgrade(low);
+    }
+    // 法术：找敌人最密处
+    if (state.spells.some((s) => s.cd <= 0)) {
+      let cx = 0, cy = 0, n = 0, nearBase = 0;
+      for (const e of enemies) { if (e.x < W * 0.55) { cx += e.x; cy += e.y; n++; } if (e.x < 260) nearBase++; }
+      if (n > 0 && nearBase >= 2) {
+        cx /= n; cy /= n;
+        const thunder = state.spells.find((s) => s.id === 'thunder');
+        if (thunder && thunder.cd <= 0) cast('thunder', cx, cy);
+        else {
+          const frost = state.spells.find((s) => s.id === 'frost');
+          if (frost && frost.cd <= 0) cast('frost', cx, cy);
+        }
+      }
+      if (state.baseHp < state.baseHpMax * 0.6) {
+        const heal = state.spells.find((s) => s.id === 'heal');
+        if (heal && heal.cd <= 0) cast('heal', 0, 0);
+      }
+    }
+  }
+
+  /* ------------------------------ 初始化 ------------------------------ */
+  const rule = {
+    status: 'playing',
+    ui: { cards: [], spells: [] },
+    init() {
+      for (const sp of state.spells) sp.cd = 0;
+      const cardY = H - 110;
+      rule.ui.cards = D.buildings.map((b, i) => ({ type: b.id, x: 18 + i * 142, y: cardY, w: 130, h: 92 }));
+      rule.ui.spells = state.spells.map((sp, i) => ({ id: sp.id, x: W - 30 - (3 - i) * 84, y: H - 104, r: 32 }));
+    },
+    update, drawWorld, drawHUD, pointer, bot,
+    result() {
+      return { stars: 0, score: state.kills * 10, coins: 0, kills: state.kills, time: state.time };
+    },
+    debug() { return { gold: state.gold, baseHp: state.baseHp, enemies: enemies.length, units: units.length, kills: state.kills, time: state.time, spawned: state.spawnIdx, schedule: schedule.length, status: rule.status }; },
+  };
+  return rule;
+}
+
+return { createRule };
+})();
+__m["js/main.js"] = (function(){
+/* 入口：创建 App，绑定启动遮罩；window.__game 供调试与自动化测试使用 */
+const { App } = __m["js/app.js"];
+
+const { CONTENT } = __m["js/content.js"];
+
+const { createRule } = __m["js/rules/horde.js"];
+
+
+const canvas = document.getElementById('game');
+const app = new App(canvas, CONTENT, createRule);
+app.mount();
+window.__game = app;
+
+const boot = document.getElementById('boot');
+function hideBoot() {
+  if (boot && boot.parentNode) {
+    boot.classList.add('hide');
+    setTimeout(() => { try { boot.remove(); } catch (e) {} }, 420);
+  }
+  app.begin();
+}
+if (boot) boot.addEventListener('pointerdown', hideBoot, { once: true });
+window.addEventListener('pointerdown', () => app.begin(), { once: true });
+
+return {  };
+})();
+})();
+
+</script>
+</body>
+</html>

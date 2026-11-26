@@ -1,0 +1,131 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "data",
+      "ok": true,
+      "info": {
+        "levels": 24,
+        "chapters": 4,
+        "defs": 5
+      }
+    },
+    {
+      "name": "sim",
+      "ok": true,
+      "info": {
+        "wins": 24,
+        "total": 24,
+        "minSec": 79.9,
+        "maxSec": 154.7,
+        "idleWins": 0
+      }
+    },
+    {
+      "name": "singlefile",
+      "ok": true,
+      "info": {
+        "file": "星海幸存者.html",
+        "kb": 130.1,
+        "external": 0
+      }
+    },
+    {
+      "name": "browser",
+      "ok": true,
+      "info": {
+        "ok": true,
+        "scene": "play",
+        "level": 3,
+        "status": "playing",
+        "fps": 60,
+        "W": 1280,
+        "H": 720,
+        "rule": {
+          "time": 2.87,
+          "hp": 112,
+          "maxHp": 112,
+          "lvl": 1,
+          "xp": 0,
+          "xpNeed": 4,
+          "kills": 0,
+          "enemies": 2,
+          "gems": 0,
+          "atk": 13,
+          "rate": 0.42,
+          "range": 430,
+          "shots": 1,
+          "pierce": 0,
+          "speed": 214,
+          "phase": "play",
+          "bossHp": 0,
+          "bossKilled": false,
+          "spawned": 2,
+          "status": "playing"
+        },
+        "save": {
+          "unlocked": 1,
+          "stars": 0
+        }
+      }
+    },
+    {
+      "name": "browser-result",
+      "ok": true,
+      "info": {
+        "ok": true
+      }
+    }
+  ],
+  "failures": [],
+  "warnings": [],
+  "stats": {
+    "sim": {
+      "wins": 24,
+      "total": 24,
+      "minSec": 79.9,
+      "maxSec": 154.7,
+      "idleWins": 0
+    },
+    "singlefile": {
+      "file": "星海幸存者.html",
+      "kb": 130.1,
+      "external": 0
+    },
+    "browser": {
+      "ok": true,
+      "scene": "play",
+      "level": 3,
+      "status": "playing",
+      "fps": 60,
+      "W": 1280,
+      "H": 720,
+      "rule": {
+        "time": 2.87,
+        "hp": 112,
+        "maxHp": 112,
+        "lvl": 1,
+        "xp": 0,
+        "xpNeed": 4,
+        "kills": 0,
+        "enemies": 2,
+        "gems": 0,
+        "atk": 13,
+        "rate": 0.42,
+        "range": 430,
+        "shots": 1,
+        "pierce": 0,
+        "speed": 214,
+        "phase": "play",
+        "bossHp": 0,
+        "bossKilled": false,
+        "spawned": 2,
+        "status": "playing"
+      },
+      "save": {
+        "unlocked": 1,
+        "stars": 0
+      }
+    }
+  }
+}

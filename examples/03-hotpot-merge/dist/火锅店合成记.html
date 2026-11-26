@@ -1,0 +1,4733 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#3a1f10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>火锅店合成记</title>
+<link rel="icon" href="data:,">
+<style>
+/* 基础重置 + 全屏画布 + 启动遮罩（所有游戏共用） */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%; overflow: hidden; background: #7a3f12;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none; touch-action: none;
+}
+#app { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+canvas#game { display: block; width: 100%; height: 100%; touch-action: none; outline: none; }
+#boot {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(120% 120% at 50% 20%, #ffd9b0 0%, #fff1d6 70%);
+  z-index: 20; transition: opacity .35s ease; cursor: pointer;
+}
+#boot.hide { opacity: 0; pointer-events: none; }
+.boot-mask { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(255,255,255,.02) 0 1px, transparent 1px 4px); }
+.boot-card { position: relative; text-align: center; padding: 28px 34px; }
+.boot-title {
+  font-size: clamp(28px, 6vw, 54px); font-weight: 900; letter-spacing: .12em;
+  color: #fff; text-shadow: 0 4px 0 rgba(0,0,0,.25), 0 0 28px rgba(255,107,53,0.55);
+}
+.boot-sub { margin-top: 10px; font-size: clamp(12px, 1.6vw, 16px); letter-spacing: .3em; color: rgba(255,255,255,.72); }
+.boot-hint {
+  margin-top: 34px; font-size: clamp(13px, 1.6vw, 16px); color: #fff; opacity: .9;
+  padding: 10px 20px; border: 1px solid rgba(255,255,255,.35); border-radius: 999px;
+  display: inline-block; animation: bootPulse 1.6s ease-in-out infinite;
+}
+@keyframes bootPulse { 0%,100% { opacity: .55; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-2px); } }
+
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="game" aria-label="火锅店合成记"></canvas>
+</div>
+<div id="boot">
+  <div class="boot-mask"></div>
+  <div class="boot-card">
+    <div class="boot-title">火锅店合成记</div>
+    <div class="boot-sub">厨房餐厅 · 采购员的冒险</div>
+    <div class="boot-hint" id="boot-hint">轻触屏幕开始</div>
+  </div>
+</div>
+<noscript>需要开启 JavaScript 才能游玩。</noscript>
+<script>
+/* 火锅店合成记 · 单文件构建（离线可玩） */
+(function(){
+"use strict";
+const __m = Object.create(null);
+__m["js/core.js"] = (function(){
+/* =========================================================================
+ * core.js —— 纯逻辑层（无 DOM，可在 Node 里跑无头仿真）
+ * 数学工具 / 可复现随机 / 版本化存档
+ * ========================================================================= */
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const invLerp = (a, b, v) => (b === a ? 0 : (v - a) / (b - a));
+const damp = (a, b, k, dt) => a + (b - a) * (1 - Math.exp(-k * dt));
+const smoothstep = (t) => t * t * (3 - 2 * t);
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+const easeOutBack = (t) => 1 + 2.2 * Math.pow(t - 1, 3) + 1.2 * Math.pow(t - 1, 2);
+const TAU = Math.PI * 2;
+const dist2 = (ax, ay, bx, by) => { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; };
+const dist = (ax, ay, bx, by) => Math.sqrt(dist2(ax, ay, bx, by));
+const pointInRect = (x, y, r) => x >= r.x && y >= r.y && x <= r.x + r.w && y <= r.y + r.h;
+const rectsOverlap = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+const fmt = (n) => {
+  n = Math.floor(n);
+  if (n >= 1e8) return (n / 1e8).toFixed(2).replace(/\.?0+$/, '') + '亿';
+  if (n >= 1e4) return (n / 1e4).toFixed(1).replace(/\.0$/, '') + '万';
+  return String(n);
+};
+const fmtTime = (s) => {
+  s = Math.max(0, Math.floor(s));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+};
+const pick = (rng, arr) => arr[Math.min(arr.length - 1, (rng() * arr.length) | 0)];
+const shuffle = (rng, arr) => {
+  for (let i = arr.length - 1; i > 0; i--) { const j = (rng() * (i + 1)) | 0; const t = arr[i]; arr[i] = arr[j]; arr[j] = t; }
+  return arr;
+};
+
+/* ---------- 可复现随机数（mulberry32） ---------- */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashString(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+class RNG {
+  constructor(seed) { this.seed = typeof seed === 'string' ? hashString(seed) : (seed >>> 0); this.f = mulberry32(this.seed); }
+  next() { return this.f(); }
+  range(a, b) { return a + (b - a) * this.f(); }
+  int(a, b) { return Math.floor(a + (b - a + 1) * this.f()); }
+  pick(arr) { return pick(this.f, arr); }
+  shuffle(arr) { return shuffle(this.f, arr); }
+  chance(p) { return this.f() < p; }
+}
+
+/* ---------- 版本化存档（localStorage 可缺省） ---------- */
+const LS = (() => { try { return typeof window === 'undefined' ? null : (window.localStorage || null); } catch (e) { return null; } })();
+
+function makeSave(slug, customDefault = {}) {
+  const KEY = 'gs_' + slug + '_v1';
+  const DEFAULT = {
+    v: 1,
+    unlocked: 1,
+    stars: {},
+    best: {},
+    coins: 0,
+    totalClears: 0,
+    totalKills: 0,
+    playSec: 0,
+    firstRun: true,
+    settings: { music: true, sfx: true, haptic: true, lowfx: false },
+    flags: {},
+    ...customDefault,
+  };
+  const deepMerge = (base, patch) => {
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return patch === undefined ? base : patch;
+    const out = Array.isArray(base) ? base.slice() : { ...base };
+    for (const k of Object.keys(patch)) {
+      const b = base ? base[k] : undefined;
+      const p = patch[k];
+      out[k] = (p && typeof p === 'object' && !Array.isArray(p) && b && typeof b === 'object' && !Array.isArray(b)) ? deepMerge(b, p) : p;
+    }
+    return out;
+  };
+  class Save {
+    constructor() { this.data = this.load(); }
+    load() {
+      try {
+        const raw = LS && LS.getItem(KEY);
+        return raw ? deepMerge(JSON.parse(JSON.stringify(DEFAULT)), JSON.parse(raw)) : JSON.parse(JSON.stringify(DEFAULT));
+      } catch (e) { return JSON.parse(JSON.stringify(DEFAULT)); }
+    }
+    flush() { try { LS && LS.setItem(KEY, JSON.stringify(this.data)); } catch (e) { /* 配额不足时静默 */ } }
+    reset() { this.data = JSON.parse(JSON.stringify(DEFAULT)); this.flush(); }
+    get settings() { return this.data.settings; }
+    setSetting(k, v) { this.data.settings[k] = v; this.flush(); }
+    starOf(id) { return this.data.stars[id] || 0; }
+    isUnlocked(id) { return id <= this.data.unlocked; }
+    complete(id, stars, score) {
+      const d = this.data;
+      d.stars[id] = Math.max(d.stars[id] || 0, stars);
+      if (!d.best[id] || score > d.best[id]) d.best[id] = score;
+      if (id + 1 > d.unlocked) d.unlocked = id + 1;
+      d.totalClears++;
+      this.flush();
+    }
+    totalStars() { return Object.keys(this.data.stars).reduce((s, k) => s + this.data.stars[k], 0); }
+    addCoins(n) { this.data.coins = Math.max(0, (this.data.coins || 0) + n); this.flush(); }
+    flag(k, v) { this.data.flags[k] = v; this.flush(); }
+  }
+  return new Save();
+}
+
+/* ---------- 无头仿真使用的空服务 ---------- */
+const silentAudio = { sfx() {}, setMuted() {}, music() {}, ok: false };
+const silentFx = { burst() {}, text() {}, shake() {}, flash() {}, ring() {}, beam() {}, ok: false };
+
+return { clamp, lerp, invLerp, damp, smoothstep, easeOutCubic, easeOutBack, TAU, dist2, dist, pointInRect, rectsOverlap, fmt, fmtTime, pick, shuffle, mulberry32, hashString, RNG, makeSave, silentAudio, silentFx };
+})();
+__m["js/platform.js"] = (function(){
+/* =========================================================================
+ * platform.js —— 浏览器平台层：自适应布局 / WebAudio 合成音乐音效 /
+ *                 粒子与屏震 / 指针输入
+ * ========================================================================= */
+const { clamp, RNG } = __m["js/core.js"];
+
+
+/* ------------------------------ 布局 ------------------------------ */
+class Layout {
+  constructor(canvas, W, H) {
+    this.canvas = canvas;
+    this.W = W; this.H = H;
+    this.scale = 1; this.ox = 0; this.oy = 0;
+    this.resize();
+  }
+  resize() {
+    // 限制总像素（约 240 万），保证竖屏高分设备也能 60fps
+    const baseDpr = Math.min(2, window.devicePixelRatio || 1);
+    const dpr = Math.max(1, Math.min(baseDpr, Math.sqrt(2400000 / (this.W * this.H))));
+    const vw = window.innerWidth, vh = window.innerHeight;
+    this.scale = Math.min(vw / this.W, vh / this.H);
+    const cw = Math.round(this.W * this.scale), ch = Math.round(this.H * this.scale);
+    this.ox = Math.round((vw - cw) / 2); this.oy = Math.round((vh - ch) / 2);
+    const c = this.canvas;
+    c.width = Math.round(this.W * dpr); c.height = Math.round(this.H * dpr);
+    c.style.width = cw + 'px'; c.style.height = ch + 'px';
+    // #app 已是 flex 居中：不要再加 margin，否则窗口比例与设计比例不同时画布会被二次偏移
+    c.style.marginLeft = '0px'; c.style.marginTop = '0px';
+    this.dpr = dpr;
+  }
+  applyTransform(ctx) { ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); }
+  toDesign(clientX, clientY) {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: ((clientX - r.left) / r.width) * this.W, y: ((clientY - r.top) / r.height) * this.H };
+  }
+}
+
+/* ------------------------------ 音频 ------------------------------ */
+const NOTE = (semi) => 440 * Math.pow(2, semi / 12); // semi 相对 A4
+
+class Sound {
+  constructor(theme) {
+    this.theme = theme || {};
+    this.ctx = null; this.master = null; this.musicGain = null; this.sfxGain = null;
+    this.muted = { music: false, sfx: false };
+    this.started = false; this.timer = null; this.step = 0; this.nextTime = 0; this.rng = new RNG(7);
+    this.mood = this.theme.music || { root: -9, scale: [0, 2, 4, 7, 9], tempo: 76 };
+  }
+  ensure() {
+    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {}); return true; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return false;
+    try {
+      this.ctx = new AC();
+      this.master = this.ctx.createGain(); this.master.gain.value = 0.85; this.master.connect(this.ctx.destination);
+      this.musicGain = this.ctx.createGain(); this.musicGain.gain.value = 0.26; this.musicGain.connect(this.master);
+      this.sfxGain = this.ctx.createGain(); this.sfxGain.gain.value = 0.7; this.sfxGain.connect(this.master);
+      this.startMusic();
+      return true;
+    } catch (e) { this.ctx = null; return false; }
+  }
+  setMuted(kind, v) {
+    this.muted[kind] = v;
+    if (!this.ctx) return;
+    const g = kind === 'music' ? this.musicGain : this.sfxGain;
+    g.gain.setTargetAtTime(v ? 0 : (kind === 'music' ? 0.26 : 0.7), this.ctx.currentTime, 0.08);
+  }
+  /* 单音：type/freq/dur/gain/slide/attack */
+  tone({ type = 'sine', freq = 440, dur = 0.15, gain = 0.25, slide = 0, attack = 0.005, dest = null, when = 0 }) {
+    if (!this.ctx || this.muted.sfx) return;
+    const t0 = this.ctx.currentTime + when;
+    const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq * slide), t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t0 + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(dest || this.sfxGain); o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  noise({ dur = 0.18, gain = 0.2, freq = 1200, q = 1, type = 'lowpass', when = 0 }) {
+    if (!this.ctx || this.muted.sfx) return;
+    const t0 = this.ctx.currentTime + when;
+    const len = Math.max(1, Math.floor(this.ctx.sampleRate * dur));
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    const f = this.ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = this.ctx.createGain(); g.gain.value = gain;
+    src.connect(f); f.connect(g); g.connect(this.sfxGain); src.start(t0);
+  }
+  sfx(name) {
+    if (!this.ctx) return;
+    switch (name) {
+      case 'click': this.tone({ type: 'triangle', freq: 660, dur: 0.06, gain: 0.16, slide: 1.2 }); break;
+      case 'coin': this.tone({ type: 'square', freq: 880, dur: 0.07, gain: 0.1 }); this.tone({ type: 'square', freq: 1320, dur: 0.1, gain: 0.07, when: 0.05 }); break;
+      case 'hit': this.noise({ dur: 0.08, gain: 0.12, freq: 900, type: 'bandpass', q: 1.4 }); break;
+      case 'punch': this.tone({ type: 'sine', freq: 160, dur: 0.12, gain: 0.3, slide: 0.5 }); break;
+      case 'arrow': this.tone({ type: 'sawtooth', freq: 900, dur: 0.08, gain: 0.05, slide: 0.4 }); break;
+      case 'explode': this.noise({ dur: 0.35, gain: 0.32, freq: 320, type: 'lowpass' }); this.tone({ type: 'sine', freq: 90, dur: 0.3, gain: 0.28, slide: 0.4 }); break;
+      case 'build': this.tone({ type: 'triangle', freq: 330, dur: 0.12, gain: 0.18 }); this.tone({ type: 'triangle', freq: 494, dur: 0.16, gain: 0.15, when: 0.07 }); break;
+      case 'upgrade': [523, 659, 784, 1046].forEach((f, i) => this.tone({ type: 'triangle', freq: f, dur: 0.14, gain: 0.12, when: i * 0.06 })); break;
+      case 'spell': this.tone({ type: 'sine', freq: 300, dur: 0.4, gain: 0.2, slide: 2.4 }); this.noise({ dur: 0.3, gain: 0.1, freq: 2000, type: 'highpass' }); break;
+      case 'freeze': this.tone({ type: 'sine', freq: 1400, dur: 0.3, gain: 0.1, slide: 0.6 }); break;
+      case 'merge': this.tone({ type: 'triangle', freq: 440, dur: 0.1, gain: 0.16, slide: 1.6 }); break;
+      case 'win': [523, 659, 784, 1046, 1318].forEach((f, i) => this.tone({ type: 'triangle', freq: f, dur: 0.22, gain: 0.14, when: i * 0.1 })); break;
+      case 'lose': [392, 330, 262, 196].forEach((f, i) => this.tone({ type: 'sawtooth', freq: f, dur: 0.26, gain: 0.09, when: i * 0.13 })); break;
+      case 'warn': this.tone({ type: 'square', freq: 220, dur: 0.18, gain: 0.1, slide: 0.8 }); break;
+      case 'pickup': this.tone({ type: 'sine', freq: 1046, dur: 0.06, gain: 0.1 }); this.tone({ type: 'sine', freq: 1568, dur: 0.08, gain: 0.07, when: 0.03 }); break;
+      default: this.tone({ type: 'sine', freq: 520, dur: 0.06, gain: 0.1 });
+    }
+  }
+  /* 极简程序化配乐：和弦 pad + 五声音阶琶音，按 mood 换调式 */
+  startMusic() {
+    if (!this.ctx || this.timer) return;
+    const m = this.mood;
+    const beat = 60 / (m.tempo || 76);
+    this.nextTime = this.ctx.currentTime + 0.1; this.step = 0;
+    const tick = () => {
+      if (!this.ctx) return;
+      while (this.nextTime < this.ctx.currentTime + 0.6) {
+        if (!this.muted.music) this.playStep(this.step, this.nextTime - this.ctx.currentTime, beat, m);
+        this.nextTime += beat; this.step++;
+      }
+      this.timer = setTimeout(tick, 180);
+    };
+    tick();
+  }
+  playStep(step, when, beat, m) {
+    const scale = m.scale || [0, 2, 4, 7, 9];
+    const root = m.root ?? -9;
+    const bar = Math.floor(step / 8) % 4;
+    const chords = [[0, 4, 7], [-3, 2, 5], [-5, 0, 4], [-1, 2, 7]];
+    const ch = chords[bar];
+    if (step % 8 === 0) {
+      for (const s of ch) this.pad(NOTE(root + s - 12), beat * 4, 0.05, when);
+    }
+    if (step % 2 === 0) {
+      const deg = scale[Math.floor(this.rng.next() * scale.length)];
+      this.arp(NOTE(root + deg + 12), beat * 0.9, 0.035, when);
+    }
+    if (step % 8 === 4) this.arp(NOTE(root + ch[2]), beat * 1.4, 0.03, when);
+  }
+  pad(freq, dur, gain, when) {
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime + when;
+    for (let i = 0; i < 2; i++) {
+      const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+      o.type = i ? 'sine' : 'triangle'; o.frequency.value = freq * (i ? 1.005 : 1);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(gain, t0 + dur * 0.3);
+      g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(this.musicGain); o.start(t0); o.stop(t0 + dur + 0.05);
+    }
+  }
+  arp(freq, dur, gain, when) {
+    if (!this.ctx) return;
+    const t0 = this.ctx.currentTime + when;
+    const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(this.musicGain); o.start(t0); o.stop(t0 + dur + 0.05);
+  }
+}
+
+/* ------------------------------ 粒子 / 表演 ------------------------------ */
+class Fx {
+  constructor() { this.parts = []; this.texts = []; this.rings = []; this.shakeAmt = 0; this.flashAmt = 0; this.quality = 1; this.rng = new RNG(99); }
+  burst(x, y, n = 8, opts = {}) {
+    const color = opts.color || '#fff';
+    const speed = opts.speed || 180;
+    const count = Math.round(n * this.quality);
+    for (let i = 0; i < count; i++) {
+      const a = opts.angle != null ? opts.angle + (this.rng.next() - 0.5) * (opts.spread || 1.6) : this.rng.next() * Math.PI * 2;
+      const v = speed * (0.4 + this.rng.next() * 0.9);
+      this.parts.push({
+        x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - (opts.up || 0),
+        life: 0, max: (opts.life || 0.5) * (0.6 + this.rng.next() * 0.7),
+        size: (opts.size || 3) * (0.6 + this.rng.next() * 0.8),
+        color, grav: opts.grav != null ? opts.grav : 420, shape: opts.shape || 'dot', drag: opts.drag || 0.99,
+      });
+    }
+  }
+  text(x, y, str, color = '#fff', size = 22, opts = {}) {
+    this.texts.push({ x, y, str: String(str), color, size, life: 0, max: opts.max || 0.9, vy: opts.vy != null ? opts.vy : -60, vx: opts.vx || 0 });
+    if (this.texts.length > 40) this.texts.shift();
+  }
+  ring(x, y, color = '#fff', r = 10, opts = {}) { this.rings.push({ x, y, color, r, r0: r, life: 0, max: opts.max || 0.45, grow: opts.grow || 120 }); }
+  beam() { /* 预留给技能连接线 */ }
+  shake(n) { this.shakeAmt = Math.min(26, this.shakeAmt + n); }
+  flash(a) { this.flashAmt = Math.max(this.flashAmt, a); }
+  update(dt) {
+    for (let i = this.parts.length - 1; i >= 0; i--) {
+      const p = this.parts[i]; p.life += dt;
+      if (p.life >= p.max) { this.parts.splice(i, 1); continue; }
+      p.vx *= p.drag; p.vy = p.vy * p.drag + p.grav * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+    }
+    for (let i = this.texts.length - 1; i >= 0; i--) {
+      const t = this.texts[i]; t.life += dt;
+      if (t.life >= t.max) { this.texts.splice(i, 1); continue; }
+      t.x += t.vx * dt; t.y += t.vy * dt; t.vy += 130 * dt;
+    }
+    for (let i = this.rings.length - 1; i >= 0; i--) {
+      const r = this.rings[i]; r.life += dt;
+      if (r.life >= r.max) { this.rings.splice(i, 1); continue; }
+      r.r += r.grow * dt;
+    }
+    this.shakeAmt *= Math.exp(-7 * dt); if (this.shakeAmt < 0.2) this.shakeAmt = 0;
+    this.flashAmt *= Math.exp(-6 * dt); if (this.flashAmt < 0.01) this.flashAmt = 0;
+  }
+  draw(ctx) {
+    for (const p of this.parts) {
+      const k = 1 - p.life / p.max;
+      ctx.globalAlpha = Math.max(0, k);
+      ctx.fillStyle = p.color;
+      if (p.shape === 'spark') {
+        ctx.fillRect(p.x - p.size * 0.5, p.y - p.size * 0.5, p.size, p.size * 2.2);
+      } else if (p.shape === 'ring') {
+        ctx.strokeStyle = p.color; ctx.lineWidth = Math.max(1, p.size * 0.5);
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1.4 - k), 0, Math.PI * 2); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (0.4 + k * 0.8), 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+    for (const r of this.rings) {
+      const k = 1 - r.life / r.max;
+      ctx.globalAlpha = Math.max(0, k) * 0.8; ctx.strokeStyle = r.color; ctx.lineWidth = 3 * k + 1;
+      ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    for (const t of this.texts) {
+      const k = t.life / t.max;
+      ctx.globalAlpha = Math.max(0, 1 - k * k);
+      ctx.font = `900 ${t.size}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      ctx.textAlign = 'center'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.55)';
+      ctx.strokeText(t.str, t.x, t.y); ctx.fillStyle = t.color; ctx.fillText(t.str, t.x, t.y);
+    }
+    ctx.globalAlpha = 1;
+  }
+  flashDraw(ctx, W, H) {
+    if (this.flashAmt > 0.01) { ctx.fillStyle = `rgba(255,255,255,${this.flashAmt * 0.5})`; ctx.fillRect(0, 0, W, H); }
+  }
+}
+
+/* ------------------------------ 输入 ------------------------------ */
+class Input {
+  constructor(canvas, layout, handlers) {
+    this.canvas = canvas; this.layout = layout; this.h = handlers;
+    this.active = new Map();
+    this.last = { x: 0, y: 0 };
+    const down = (e) => {
+      const p = this.pt(e); this.active.set(e.pointerId ?? 0, p); this.last = p;
+      this.h.onDown?.(p.x, p.y, e);
+      if (e.pointerId != null && canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) {} }
+      e.preventDefault();
+    };
+    const move = (e) => {
+      const p = this.pt(e); this.last = p;
+      this.h.onMove?.(p.x, p.y, e);
+      e.preventDefault();
+    };
+    const up = (e) => {
+      const p = this.pt(e); this.h.onUp?.(p.x, p.y, e);
+      this.active.delete(e.pointerId ?? 0);
+      e.preventDefault();
+    };
+    canvas.addEventListener('pointerdown', down, { passive: false });
+    canvas.addEventListener('pointermove', move, { passive: false });
+    canvas.addEventListener('pointerup', up, { passive: false });
+    canvas.addEventListener('pointercancel', up, { passive: false });
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    window.addEventListener('keydown', (e) => {
+      if (this.h.onKey) this.h.onKey(e.key, e);
+    });
+    window.addEventListener('resize', () => layout.resize());
+  }
+  pt(e) {
+    const t = e.touches ? e.touches[0] : e;
+    return this.layout.toDesign(t.clientX, t.clientY);
+  }
+}
+
+return { Layout, Sound, Fx, Input };
+})();
+__m["js/render.js"] = (function(){
+/* =========================================================================
+ * render.js —— 通用 Canvas2D 绘制工具：圆角面板 / 文字 / 按钮 / 进度条 /
+ *               星星 / 渐变背景 / 图标
+ * ========================================================================= */
+const { clamp, easeOutCubic } = __m["js/core.js"];
+
+
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+function rect(ctx, x, y, w, h, fill) {
+  ctx.fillStyle = fill; ctx.fillRect(x, y, w, h);
+}
+function panel(ctx, x, y, w, h, o = {}) {
+  const r = o.r == null ? 18 : o.r;
+  ctx.save();
+  if (o.shadow !== false) {
+    ctx.shadowColor = o.shadowColor || 'rgba(0,0,0,.35)';
+    ctx.shadowBlur = o.shadowBlur == null ? 18 : o.shadowBlur;
+    ctx.shadowOffsetY = o.shadowOffsetY == null ? 6 : o.shadowOffsetY;
+  }
+  roundRect(ctx, x, y, w, h, r);
+  ctx.fillStyle = o.fill || 'rgba(16,20,36,.86)';
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  if (o.stroke) { ctx.lineWidth = o.lineWidth || 2; ctx.strokeStyle = o.stroke; ctx.stroke(); }
+  ctx.restore();
+}
+function text(ctx, str, x, y, o = {}) {
+  ctx.save();
+  const size = o.size || 20;
+  const weight = o.weight || 800;
+  ctx.font = `${weight} ${size}px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif`;
+  ctx.textAlign = o.align || 'left';
+  ctx.textBaseline = o.baseline || 'middle';
+  if (o.stroke) {
+    ctx.lineWidth = o.strokeWidth || Math.max(3, size * 0.16);
+    ctx.strokeStyle = o.stroke;
+    ctx.lineJoin = 'round';
+    ctx.strokeText(str, x, y);
+  }
+  if (o.shadow) { ctx.shadowColor = o.shadow; ctx.shadowBlur = o.shadowBlur || 8; ctx.shadowOffsetY = o.shadowY || 2; }
+  ctx.fillStyle = o.color || '#fff';
+  ctx.fillText(str, x, y);
+  ctx.restore();
+}
+function measure(ctx, str, size, weight = 800) {
+  ctx.font = `${weight} ${size}px -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif`;
+  return ctx.measureText(str).width;
+}
+function button(ctx, r, label, o = {}) {
+  const pressed = o.pressed ? 2 : 0;
+  const y = r.y + pressed;
+  ctx.save();
+  if (o.shadow !== false) {
+    ctx.shadowColor = 'rgba(0,0,0,.30)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = o.pressed ? 2 : 6;
+  }
+  roundRect(ctx, r.x, y, r.w, r.h, o.r == null ? 16 : o.r);
+  const g = ctx.createLinearGradient(0, y, 0, y + r.h);
+  if (o.disabled) { g.addColorStop(0, 'rgba(90,96,120,.55)'); g.addColorStop(1, 'rgba(60,66,90,.55)'); }
+  else {
+    g.addColorStop(0, o.fill1 || '#ffd76a'); g.addColorStop(1, o.fill2 || '#f2a33c');
+  }
+  ctx.fillStyle = g; ctx.fill();
+  ctx.shadowColor = 'transparent';
+  if (o.stroke !== false) {
+    roundRect(ctx, r.x, y, r.w, r.h, o.r == null ? 16 : o.r);
+    ctx.lineWidth = o.lineWidth || 2;
+    ctx.strokeStyle = o.disabled ? 'rgba(255,255,255,.14)' : (o.stroke || 'rgba(255,255,255,.55)');
+    ctx.stroke();
+  }
+  // 高光
+  if (!o.disabled && o.gloss !== false) {
+    roundRect(ctx, r.x + 6, y + 4, r.w - 12, r.h * 0.38, 10);
+    ctx.fillStyle = 'rgba(255,255,255,.22)'; ctx.fill();
+  }
+  const size = o.size || Math.min(26, r.h * 0.42);
+  text(ctx, label, r.x + r.w / 2, y + r.h / 2 + 1, {
+    size, color: o.disabled ? 'rgba(255,255,255,.45)' : (o.color || '#3a2408'),
+    align: 'center', weight: 900, shadow: o.textShadow === false ? null : null,
+  });
+  ctx.restore();
+}
+function bar(ctx, x, y, w, h, k, o = {}) {
+  k = clamp(k, 0, 1);
+  roundRect(ctx, x, y, w, h, h / 2); ctx.fillStyle = o.bg || 'rgba(0,0,0,.45)'; ctx.fill();
+  if (k > 0) {
+    roundRect(ctx, x, y, Math.max(h, w * k), h, h / 2);
+    const g = ctx.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, o.c1 || '#ff6b57'); g.addColorStop(1, o.c2 || '#ffd76a');
+    ctx.fillStyle = o.color || g; ctx.fill();
+  }
+  if (o.stroke) { roundRect(ctx, x, y, w, h, h / 2); ctx.lineWidth = 1.5; ctx.strokeStyle = o.stroke; ctx.stroke(); }
+}
+function star(ctx, x, y, r, filled, o = {}) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(o.rot || 0);
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + i * Math.PI / 5;
+    const rr = i % 2 === 0 ? r : r * 0.45;
+    ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr);
+  }
+  ctx.closePath();
+  if (filled) {
+    const g = ctx.createLinearGradient(0, -r, 0, r);
+    g.addColorStop(0, o.c1 || '#ffe58a'); g.addColorStop(1, o.c2 || '#ffb52e');
+    ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = Math.max(1.5, r * 0.12); ctx.strokeStyle = o.stroke || 'rgba(120,70,0,.55)'; ctx.stroke();
+  } else {
+    ctx.fillStyle = o.empty || 'rgba(255,255,255,.13)'; ctx.fill();
+    ctx.lineWidth = Math.max(1, r * 0.1); ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.stroke();
+  }
+  ctx.restore();
+}
+function gradient(ctx, W, H, colors, vertical = true) {
+  const g = ctx.createLinearGradient(0, 0, vertical ? 0 : W, vertical ? H : 0);
+  colors.forEach((c, i) => g.addColorStop(i / Math.max(1, colors.length - 1), c));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function vignette(ctx, W, H, strength = 0.35) {
+  const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, `rgba(0,0,0,${strength})`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function icon(ctx, kind, x, y, s, color) {
+  ctx.save(); ctx.translate(x, y); ctx.strokeStyle = color || '#fff'; ctx.fillStyle = color || '#fff';
+  ctx.lineWidth = Math.max(2, s * 0.12); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const h = s / 2;
+  if (kind === 'play') { ctx.beginPath(); ctx.moveTo(-h * 0.55, -h); ctx.lineTo(h * 0.9, 0); ctx.lineTo(-h * 0.55, h); ctx.closePath(); ctx.fill(); }
+  else if (kind === 'pause') { ctx.fillRect(-h * 0.62, -h, h * 0.42, h * 2); ctx.fillRect(h * 0.2, -h, h * 0.42, h * 2); }
+  else if (kind === 'back') { ctx.beginPath(); ctx.moveTo(h * 0.35, -h); ctx.lineTo(-h * 0.55, 0); ctx.lineTo(h * 0.35, h); ctx.stroke(); }
+  else if (kind === 'restart') { ctx.beginPath(); ctx.arc(0, 0, h * 0.72, -Math.PI * 0.35, Math.PI * 1.45); ctx.stroke(); ctx.beginPath(); ctx.moveTo(h * 0.68, -h * 0.55); ctx.lineTo(h * 0.92, h * 0.05); ctx.lineTo(h * 0.28, -h * 0.06); ctx.fill(); }
+  else if (kind === 'gear') {
+    ctx.beginPath(); ctx.arc(0, 0, h * 0.34, 0, Math.PI * 2); ctx.stroke();
+    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; ctx.beginPath(); ctx.moveTo(Math.cos(a) * h * 0.52, Math.sin(a) * h * 0.52); ctx.lineTo(Math.cos(a) * h * 0.92, Math.sin(a) * h * 0.92); ctx.stroke(); }
+  }
+  else if (kind === 'sound') { ctx.beginPath(); ctx.moveTo(-h, -h * 0.35); ctx.lineTo(-h * 0.45, -h * 0.35); ctx.lineTo(h * 0.1, -h * 0.8); ctx.lineTo(h * 0.1, h * 0.8); ctx.lineTo(-h * 0.45, h * 0.35); ctx.lineTo(-h, h * 0.35); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.arc(h * 0.18, 0, h * 0.55, -0.9, 0.9); ctx.stroke(); }
+  else if (kind === 'mute') { ctx.beginPath(); ctx.moveTo(-h, -h * 0.3); ctx.lineTo(-h * 0.3, -h * 0.3); ctx.lineTo(h * 0.3, -h * 0.8); ctx.lineTo(h * 0.3, h * 0.8); ctx.lineTo(-h * 0.3, h * 0.3); ctx.lineTo(-h, h * 0.3); ctx.closePath(); ctx.fill(); ctx.beginPath(); ctx.moveTo(h * 0.55, -h * 0.4); ctx.lineTo(h * 1.0, h * 0.4); ctx.moveTo(h * 1.0, -h * 0.4); ctx.lineTo(h * 0.55, h * 0.4); ctx.stroke(); }
+  else if (kind === 'lock') { ctx.fillRect(-h * 0.6, -h * 0.05, h * 1.2, h * 0.85); ctx.beginPath(); ctx.arc(0, -h * 0.05, h * 0.4, Math.PI, 0); ctx.stroke(); }
+  else if (kind === 'home') { ctx.beginPath(); ctx.moveTo(-h, 0); ctx.lineTo(0, -h); ctx.lineTo(h, 0); ctx.stroke(); ctx.fillRect(-h * 0.55, 0, h * 1.1, h * 0.75); }
+  else if (kind === 'star') { ctx.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5; const rr = i % 2 ? h * 0.45 : h; ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr); } ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+}
+function entering(t, dur = 0.35) { return easeOutCubic(clamp(t / dur, 0, 1)); }
+
+return { roundRect, rect, panel, text, measure, button, bar, star, gradient, vignette, icon, entering };
+})();
+__m["js/art.js"] = (function(){
+/* =========================================================================
+ * art.js —— 程序化美术：所有画面零外部素材，按主题调色板实时绘制
+ *   sky / 场景 / 角色 / 建筑 / 投射物 / 拾取物
+ * ========================================================================= */
+const { clamp, TAU, hashString, mulberry32 } = __m["js/core.js"];
+
+const { roundRect, bar } = __m["js/render.js"];
+
+
+const DEF = {
+  sky: ['#101427', '#2b1d3a'], ground: '#3a2d3f', groundDark: '#241a2b',
+  accent: '#ffcf5c', accent2: '#ff7a59', hero: '#8fd3ff', hero2: '#3f7ea8',
+  enemy: '#c85a6a', enemy2: '#7a2f42', gold: '#ffd76a', text: '#ffffff',
+  danger: '#ff5d5d', ok: '#62d68f', ui: 'rgba(16,20,36,.86)', ui2: 'rgba(255,255,255,.12)', ink: '#101427',
+};
+
+function pal(theme) {
+  const p = { ...DEF, ...(theme.palette || {}) };
+  if (!Array.isArray(p.sky)) p.sky = DEF.sky;
+  return p;
+}
+
+function makeArt(theme) {
+  const C = pal(theme);
+  const mood = theme.mood || 'night';
+  const seed = hashString(theme.id || 'theme');
+  const rnd = mulberry32(seed);
+
+  function sky(ctx, W, H, t) {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, C.sky[0]); g.addColorStop(0.65, C.sky[1]); g.addColorStop(1, C.groundDark);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    if (mood === 'space') {
+      for (let i = 0; i < 90; i++) {
+        const x = rnd() * W, y = rnd() * H * 0.8, s = rnd() * 2 + 0.4;
+        ctx.globalAlpha = 0.3 + 0.5 * (0.5 + 0.5 * Math.sin(t * 1.2 + i));
+        ctx.fillStyle = '#fff'; ctx.fillRect(x, y, s, s);
+      }
+      ctx.globalAlpha = 1;
+      const gg = ctx.createRadialGradient(W * 0.78, H * 0.22, 4, W * 0.78, H * 0.22, H * 0.34);
+      gg.addColorStop(0, 'rgba(140,190,255,.55)'); gg.addColorStop(1, 'rgba(140,190,255,0)');
+      ctx.fillStyle = gg; ctx.fillRect(0, 0, W, H);
+    } else if (mood === 'night' || mood === 'dusk') {
+      for (let i = 0; i < 46; i++) {
+        const x = rnd() * W, y = rnd() * H * 0.55, s = rnd() * 1.8 + 0.4;
+        ctx.globalAlpha = 0.25 + 0.5 * (0.5 + 0.5 * Math.sin(t * 0.8 + i * 1.7));
+        ctx.fillStyle = '#fff8e0'; ctx.fillRect(x, y, s, s);
+      }
+      ctx.globalAlpha = 1;
+      const mx = W * 0.8, my = H * 0.18, mr = Math.min(W, H) * 0.075;
+      const mg = ctx.createRadialGradient(mx, my, mr * 0.4, mx, my, mr * 2.6);
+      mg.addColorStop(0, 'rgba(255,245,210,.35)'); mg.addColorStop(1, 'rgba(255,245,210,0)');
+      ctx.fillStyle = mg; ctx.fillRect(mx - mr * 3, my - mr * 3, mr * 6, mr * 6);
+      ctx.fillStyle = '#fff2c4'; ctx.beginPath(); ctx.arc(mx, my, mr, 0, TAU); ctx.fill();
+      ctx.fillStyle = C.sky[1]; ctx.beginPath(); ctx.arc(mx - mr * 0.42, my - mr * 0.3, mr * 0.92, 0, TAU); ctx.fill();
+    } else if (mood === 'underwater') {
+      for (let i = 0; i < 26; i++) {
+        const x = rnd() * W, y = H - ((t * (18 + rnd() * 30) + rnd() * H) % H);
+        ctx.globalAlpha = 0.18 + rnd() * 0.2; ctx.fillStyle = '#dffcff';
+        ctx.beginPath(); ctx.arc(x, y, 2 + rnd() * 5, 0, TAU); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      for (let i = 0; i < 5; i++) {
+        ctx.globalAlpha = 0.06; ctx.fillStyle = '#bff3ff';
+        ctx.beginPath(); ctx.moveTo(rnd() * W, 0); ctx.lineTo(W * 0.3 + i * 80, H); ctx.lineTo(W * 0.3 + i * 80 + 80, H); ctx.closePath(); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    return g;
+  }
+
+  function farLayers(ctx, W, H, t, groundY) {
+    const p1 = groundY - H * 0.16;
+    ctx.fillStyle = 'rgba(0,0,0,.18)';
+    ctx.beginPath(); ctx.moveTo(0, groundY);
+    let x = 0;
+    while (x < W) { const w = 120 + rnd() * 200, h = 20 + rnd() * 70; ctx.lineTo(x, p1 - h * 0.3); ctx.lineTo(x + w * 0.5, p1 - h); ctx.lineTo(x + w, p1 - h * 0.2); x += w; }
+    ctx.lineTo(W, groundY); ctx.closePath(); ctx.fill();
+    // 中景建筑/树剪影
+    const base = groundY - 4;
+    x = -40;
+    while (x < W + 60) {
+      const w = 46 + rnd() * 70, h = 50 + rnd() * 120;
+      ctx.fillStyle = 'rgba(0,0,0,.28)';
+      if (mood === 'underwater') {
+        ctx.beginPath(); ctx.ellipse(x + w / 2, base, w * 0.3, h * 0.5, 0, Math.PI, 0); ctx.fill();
+      } else if (mood === 'forest') {
+        ctx.beginPath(); ctx.moveTo(x + w / 2, base - h); ctx.lineTo(x + w, base); ctx.lineTo(x, base); ctx.closePath(); ctx.fill();
+      } else {
+        ctx.fillRect(x, base - h, w, h);
+        if (rnd() < 0.6) { ctx.fillStyle = 'rgba(255,220,140,.35)'; for (let k = 0; k < 4; k++) ctx.fillRect(x + 8 + rnd() * (w - 20), base - h + 10 + rnd() * (h - 24), 5, 7); }
+      }
+      x += w + 12;
+    }
+    // 地平线
+    const gg = ctx.createLinearGradient(0, groundY, 0, H);
+    gg.addColorStop(0, C.ground); gg.addColorStop(1, C.groundDark);
+    ctx.fillStyle = gg; ctx.fillRect(0, groundY, W, H - groundY);
+    ctx.fillStyle = 'rgba(255,255,255,.07)'; ctx.fillRect(0, groundY, W, 3);
+  }
+
+  /* 静态背景离屏缓存：标题/结算场景每帧重绘天空+远景是主要开销 */
+  let bgCache = null, bgKey = '';
+  function scene(ctx, W, H, t, o = {}) {
+    const groundY = o.groundY == null ? H * 0.72 : o.groundY;
+    const key = W + 'x' + H + '@' + Math.round(groundY);
+    if (key !== bgKey) {
+      bgCache = null; bgKey = key;
+      const doc = ctx.canvas && ctx.canvas.ownerDocument;
+      if (doc && doc.createElement) {
+        const dpr = Math.min(2, (ctx.getTransform && ctx.getTransform().a) || 1);
+        const c = doc.createElement('canvas');
+        c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+        const g = c.getContext('2d');
+        if (g) {
+          g.setTransform(dpr, 0, 0, dpr, 0, 0);
+          sky(g, W, H, 0);
+          farLayers(g, W, H, 0, groundY);
+          bgCache = c;
+        }
+      }
+    }
+    if (bgCache) { ctx.drawImage(bgCache, 0, 0, W, H); return groundY; }
+    sky(ctx, W, H, t);
+    farLayers(ctx, W, H, t, groundY);
+    return groundY;
+  }
+
+  /* 角色：身体 + 头 + 眼睛 + 武器/配件。kind: hero|enemy|boss，role: melee|ranged|mage|heal|tank */
+  function char(ctx, x, y, s, o = {}) {
+    const kind = o.kind || 'hero';
+    const facing = o.facing == null ? 1 : o.facing;
+    const role = o.role || 'melee';
+    const tier = o.tier || 1;
+    const t = o.t || 0;
+    const flash = o.flash ? 1 : 0;
+    // 受击白闪：直接换配色（原来的 source-atop 叠加会在不透明背景上糊出一个白方块）
+    const body = flash ? '#f2f4ff' : kind === 'enemy' ? C.enemy : kind === 'boss' ? C.enemy2 : C.hero;
+    const body2 = flash ? '#ffffff' : kind === 'enemy' ? C.enemy2 : kind === 'boss' ? C.danger : C.hero2;
+    const hash = hashString((o.name || '') + tier);
+    ctx.save(); ctx.translate(x, y);
+    const breathe = Math.sin(t * 6 + hash) * 0.02;
+    ctx.scale(s * facing, s * (1 + breathe));
+    // 影子
+    ctx.save(); ctx.scale(1 / Math.max(0.2, facing), 1); ctx.globalAlpha = 0.28; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(0, 2, 13, 4.5, 0, 0, TAU); ctx.fill(); ctx.restore();
+    // 腿（走路摆）
+    const walk = o.moving ? Math.sin(t * 9 + hash) * 3 : 0;
+    ctx.fillStyle = body2;
+    ctx.fillRect(-6, -8 + walk * 0.3, 4.5, 9 + walk * 0.4);
+    ctx.fillRect(2, -8 - walk * 0.3, 4.5, 9 - walk * 0.4);
+    // 身体
+    const bh = 18 + tier * 1.6;
+    roundRect(ctx, -9, -8 - bh, 18, bh, 7); ctx.fillStyle = body; ctx.fill();
+    // 披风/护甲
+    ctx.fillStyle = body2;
+    roundRect(ctx, -11, -8 - bh + 4, 22, 5, 2); ctx.fill();
+    if (kind !== 'enemy') { ctx.fillStyle = C.accent; ctx.fillRect(-3, -8 - bh + 4, 6, 3); }
+    // 头
+    const hy = -8 - bh - 8;
+    ctx.beginPath(); ctx.arc(0, hy, 9.5, 0, TAU); ctx.fillStyle = kind === 'enemy' ? body2 : '#f6d3aa'; ctx.fill();
+    if (kind === 'enemy') { ctx.strokeStyle = C.enemy2; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(0, hy, 9.5, 0, TAU); ctx.stroke(); }
+    // 眼睛
+    ctx.fillStyle = kind === 'enemy' ? '#2a0d14' : '#222';
+    ctx.beginPath(); ctx.arc(3.4, hy - 1, 1.5, 0, TAU); ctx.fill();
+    if (kind === 'boss') {
+      ctx.fillStyle = C.gold;
+      ctx.beginPath(); ctx.moveTo(-9, hy - 9); ctx.lineTo(-5, hy - 15); ctx.lineTo(-1, hy - 10); ctx.lineTo(3, hy - 16); ctx.lineTo(7, hy - 9); ctx.closePath(); ctx.fill();
+    } else if (hash % 3 === 0) {
+      ctx.fillStyle = kind === 'enemy' ? C.enemy : C.accent2;
+      roundRect(ctx, -10, hy - 10, 20, 4, 2); ctx.fill();
+    } else if (hash % 3 === 1) {
+      ctx.fillStyle = kind === 'enemy' ? C.enemy2 : C.accent;
+      ctx.beginPath(); ctx.arc(0, hy - 10, 5, Math.PI, 0); ctx.fill();
+    }
+    // 武器
+    ctx.strokeStyle = kind === 'enemy' ? C.enemy2 : C.accent2; ctx.lineWidth = 2.4; ctx.lineCap = 'round';
+    if (role === 'ranged') {
+      ctx.beginPath(); ctx.arc(10, -8 - bh * 0.55, 7, -1.2, 1.2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(13.5, -8 - bh * 0.55 - 7.6); ctx.lineTo(13.5, -8 - bh * 0.55 + 7.6); ctx.stroke();
+    } else if (role === 'mage') {
+      ctx.beginPath(); ctx.moveTo(10, -8 - bh * 0.2); ctx.lineTo(14, -8 - bh - 14); ctx.stroke();
+      ctx.fillStyle = C.accent; ctx.beginPath(); ctx.arc(14, -8 - bh - 16, 3.4, 0, TAU); ctx.fill();
+    } else if (role === 'heal') {
+      ctx.beginPath(); ctx.moveTo(9, -8 - bh * 0.6); ctx.lineTo(17, -8 - bh * 0.6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(13, -8 - bh * 0.6 - 4); ctx.lineTo(13, -8 - bh * 0.6 + 4); ctx.stroke();
+    } else if (role === 'tank') {
+      ctx.fillStyle = C.ui2; roundRect(ctx, 6, -8 - bh * 0.85, 9, bh * 0.8, 4); ctx.fill();
+      ctx.strokeStyle = C.accent; ctx.strokeRect(6, -8 - bh * 0.85, 9, bh * 0.8);
+    } else {
+      ctx.beginPath(); ctx.moveTo(10, -8 - bh * 0.45); ctx.lineTo(19, -8 - bh * 0.95); ctx.stroke();
+    }
+    ctx.restore();
+    if (o.hp != null && o.hp < 1) {
+      const w = Math.max(18, s * 22);
+      ctx.save(); ctx.translate(x - w / 2, y - s * 46); bar(ctx, 0, 0, w, 4, o.hp, { c1: C.danger, c2: C.ok }); ctx.restore();
+    }
+  }
+
+  function building(ctx, x, y, w, h, o = {}) {
+    const lvl = o.level || 1;
+    const t = o.t || 0;
+    const kind = o.kind || 0;
+    ctx.save(); ctx.translate(x, y);
+    ctx.globalAlpha = 0.3; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(0, 0, w * 0.5, 6, 0, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+    // 基座
+    ctx.fillStyle = C.groundDark; roundRect(ctx, -w / 2, -8, w, 8, 3); ctx.fill();
+    // 主体
+    const g = ctx.createLinearGradient(0, -h, 0, 0);
+    g.addColorStop(0, C.ui2); g.addColorStop(1, C.groundDark);
+    roundRect(ctx, -w * 0.42, -h, w * 0.84, h, 6); ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = o.selected ? C.accent : 'rgba(255,255,255,.18)'; roundRect(ctx, -w * 0.42, -h, w * 0.84, h, 6); ctx.stroke();
+    if (kind === 0) { // 兵营
+      ctx.fillStyle = C.accent2; ctx.beginPath(); ctx.moveTo(-w * 0.42, -h); ctx.lineTo(0, -h - 14); ctx.lineTo(w * 0.42, -h); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = C.ink; roundRect(ctx, -w * 0.14, -h * 0.55, w * 0.28, h * 0.55, 3); ctx.fill();
+    } else if (kind === 1) { // 箭塔
+      roundRect(ctx, -w * 0.2, -h - 26, w * 0.4, 26, 3); ctx.fillStyle = C.accent2; ctx.fill();
+      ctx.fillStyle = C.ink; for (let i = 0; i < 3; i++) { ctx.fillRect(-w * 0.2 + i * w * 0.15, -h - 26, w * 0.07, 8); }
+    } else if (kind === 2) { // 法阵
+      ctx.strokeStyle = C.accent; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, -h - 8, 8 + Math.sin(t * 3) * 1.5, 0, TAU); ctx.stroke();
+      ctx.fillStyle = C.accent; ctx.globalAlpha = 0.8; ctx.beginPath(); ctx.arc(0, -h - 8, 3, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+    } else { // 墙
+      ctx.fillStyle = C.groundDark; for (let i = 0; i < 3; i++) ctx.fillRect(-w * 0.45, -h + i * (h / 3), w * 0.9, h / 6);
+    }
+    // 等级角标
+    if (lvl > 1) {
+      ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(w * 0.36, -h + 4, 9, 0, TAU); ctx.fill();
+      ctx.fillStyle = C.ink; ctx.font = '900 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(lvl), w * 0.36, -h + 4);
+    }
+    ctx.restore();
+    if (o.hp != null && o.hp < 1) { ctx.save(); ctx.translate(x - w * 0.42, y - h - 10); bar(ctx, 0, 0, w * 0.84, 4, o.hp); ctx.restore(); }
+    if (o.cd != null) { ctx.save(); ctx.translate(x - w * 0.42, y - 6); bar(ctx, 0, 0, w * 0.84, 3, 1 - o.cd, { c1: C.accent, c2: C.gold }); ctx.restore(); }
+  }
+
+  function projectile(ctx, x, y, o = {}) {
+    const kind = o.kind || 'arrow';
+    ctx.save(); ctx.translate(x, y);
+    if (kind === 'arrow') {
+      const a = o.angle || 0; ctx.rotate(a);
+      ctx.strokeStyle = o.color || C.accent; ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.moveTo(-10, 0); ctx.lineTo(8, 0); ctx.stroke();
+      ctx.fillStyle = o.color || C.accent; ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(5, -4); ctx.lineTo(5, 4); ctx.closePath(); ctx.fill();
+    } else if (kind === 'orb') {
+      const r = o.r || 6;
+      const g = ctx.createRadialGradient(0, 0, 1, 0, 0, r * 2);
+      g.addColorStop(0, '#fff'); g.addColorStop(0.4, o.color || C.accent); g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 2, 0, TAU); ctx.fill();
+    } else if (kind === 'shock') {
+      ctx.strokeStyle = o.color || C.hero; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, 0, o.r || 10, 0, TAU); ctx.stroke();
+    } else {
+      ctx.fillStyle = o.color || C.gold;
+      ctx.beginPath(); ctx.arc(0, 0, o.r || 4, 0, TAU); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function pickup(ctx, x, y, o = {}) {
+    const t = o.t || 0, r = o.r || 9;
+    ctx.save(); ctx.translate(x, y + Math.sin(t * 3) * 3);
+    ctx.globalAlpha = 0.9;
+    const g = ctx.createRadialGradient(0, 0, 1, 0, 0, r * 2);
+    g.addColorStop(0, o.color || C.gold); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 2, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = o.color || C.gold;
+    if (o.shape === 'gem') { ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(r * 0.8, 0); ctx.lineTo(0, r); ctx.lineTo(-r * 0.8, 0); ctx.closePath(); ctx.fill(); }
+    else if (o.shape === 'star') { ctx.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5; const rr = i % 2 ? r * 0.5 : r; ctx[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr); } ctx.closePath(); ctx.fill(); }
+    else { ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill(); }
+    ctx.restore();
+  }
+
+  function flag(ctx, x, y, color, t) {
+    ctx.save(); ctx.translate(x, y);
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -54); ctx.stroke();
+    ctx.fillStyle = color || C.accent;
+    ctx.beginPath(); ctx.moveTo(0, -54);
+    for (let i = 0; i <= 8; i++) ctx.lineTo(i * 4.4, -54 + Math.sin(t * 5 + i * 0.7) * 2.4 + i * 0.4);
+    for (let i = 8; i >= 0; i--) ctx.lineTo(i * 4.4, -54 + Math.sin(t * 5 + i * 0.7) * 2.4 + 14 - i * 0.4);
+    ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+
+  return { C, mood, sky, scene, char, building, projectile, pickup, flag };
+}
+
+return { makeArt };
+})();
+__m["js/app.js"] = (function(){
+/* =========================================================================
+ * app.js —— 游戏外壳：画布/自适应/固定步长主循环/场景栈（标题-选关-战斗-结算-
+ *           设置-说明）/存档/音频解锁/暂停/调试 API
+ * 规则层（js/rules/*.js）只负责玩法；这里负责所有通用壳层。
+ * ========================================================================= */
+const { clamp, makeSave, RNG, fmt, fmtTime } = __m["js/core.js"];
+
+const { Layout, Sound, Fx, Input } = __m["js/platform.js"];
+
+const { makeArt } = __m["js/art.js"];
+
+const R = __m["js/render.js"];
+
+
+const STEP = 1 / 60;
+
+class App {
+  constructor(canvas, content, createRule) {
+    this.canvas = canvas;
+    this.content = content;
+    this.createRule = createRule;
+    this.cfg = content.config || {};
+    this.portrait = (content.orientation || 'landscape') === 'portrait';
+    this.W = this.portrait ? 720 : 1280;
+    this.H = this.portrait ? 1280 : 720;
+    this.layout = new Layout(canvas, this.W, this.H);
+    this.art = makeArt(content.theme || {});
+    this.audio = new Sound(content.theme || {});
+    this.fx = new Fx();
+    this.save = makeSave(content.slug || 'game', content.saveDefaults || {});
+    this.ctx = canvas.getContext('2d');
+    this.scene = 'title';
+    this.sceneT = 0;
+    this.acc = 0; this.last = 0; this.fps = 60; this.frames = 0; this.fpsT = 0;
+    this.buttons = [];
+    this.toasts = [];
+    this.levelId = 0; this.rule = null; this.pendingResult = null; this.finishing = 0;
+    this.paused = false;
+    this.started = false;
+    this.demoT = 0;
+    this.tipsSeen = this.save.data.tipsSeen || {};
+    this.inputBound = false;
+    this.loop = this.loop.bind(this);
+    this.input = null;
+  }
+  mount() {
+    this.layout.resize();
+    this.layout.applyTransform(this.ctx);
+    this.input = new Input(this.canvas, this.layout, {
+      onDown: (x, y) => this.onDown(x, y),
+      onMove: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('move', x, y); },
+      onUp: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('up', x, y); },
+      onKey: (k) => this.onKey(k),
+    });
+    document.addEventListener('visibilitychange', () => { if (document.hidden && this.scene === 'play') this.setPaused(true); });
+    requestAnimationFrame(this.loop);
+  }
+  begin() {
+    if (this.started) return;
+    this.started = true;
+    if (!this.audio.ensure()) { /* 无音频环境也继续 */ }
+    for (const k of ['music', 'sfx']) this.audio.setMuted(k, !this.save.settings[k]);
+    if (this.save.data.firstRun) { this.save.data.firstRun = false; this.save.flush(); }
+  }
+  /* ---------------------------- 主循环 ---------------------------- */
+  loop(ts) {
+    if (!this.last) this.last = ts;
+    let dt = (ts - this.last) / 1000; this.last = ts;
+    if (dt > 0.25) dt = 0.25;
+    this.frames++; this.fpsT += dt;
+    if (this.fpsT >= 0.5) { this.fps = this.frames / this.fpsT; this.frames = 0; this.fpsT = 0; }
+    this.sceneT += dt; this.demoT += dt;
+    if (this.scene === 'play' && !this.paused) {
+      this.acc += dt;
+      let guard = 0;
+      while (this.acc >= STEP && guard < 4) { this.step(STEP); this.acc -= STEP; guard++; }
+      if (guard >= 4) this.acc = 0;
+    } else {
+      this.acc = 0;
+    }
+    this.fx.update(dt);
+    this.updateToasts(dt);
+    if (this.scene === 'play' && this.rule && !this.paused) {
+      if (this.rule.status !== 'playing' && this.finishing === 0) {
+        this.finishing = 0.0001;
+        this.audio.sfx(this.rule.status === 'won' ? 'win' : 'lose');
+      }
+      if (this.finishing > 0) {
+        this.finishing += dt;
+        if (this.finishing > 1.25) this.finishLevel();
+      }
+    }
+    this.render(dt);
+    requestAnimationFrame(this.loop);
+  }
+  step(dt) {
+    if (!this.rule) return;
+    this.rule.update(dt);
+  }
+  /* 测试用：用机器人策略快进 n 秒（不渲染），返回当前状态 */
+  fastForward(seconds) {
+    if (this.scene !== 'play' || !this.rule) return 'no-play';
+    const steps = Math.round((seconds || 60) * 60);
+    for (let i = 0; i < steps && this.rule.status === 'playing'; i++) {
+      if (this.rule.bot) this.rule.bot(1 / 60);
+      this.step(1 / 60);
+    }
+    return this.rule.status;
+  }
+  /* ---------------------------- 场景 ---------------------------- */
+  go(scene) {
+    this.scene = scene; this.sceneT = 0; this.buttons = [];
+    if (scene !== 'play') { this.paused = false; }
+    if (scene === 'title') this.audio.musicGain && this.audio.musicGain.gain.setTargetAtTime(0.26, this.audio.ctx.currentTime, 0.2);
+  }
+  startLevel(id) {
+    const levels = this.content.levels || [];
+    const lv = levels.find((l) => l.id === id) || levels[0];
+    if (!lv) return false;
+    this.levelId = lv.id;
+    this.finishing = 0; this.pendingResult = null; this.paused = false;
+    const self = this;
+    const svc = {
+      app: this, content: this.content, level: lv, levelId: lv.id,
+      W: this.W, H: this.H, portrait: this.portrait,
+      rng: new RNG(this.content.slug + ':' + lv.id + ':' + (this.cfg.seed || 0)),
+      save: this.save, audio: this.audio, fx: this.fx, art: this.art,
+      finish: (payload) => { if (!self.pendingResult) self.pendingResult = payload || {}; },
+      toast: (msg) => self.toast(msg),
+      replay: () => self.startLevel(self.levelId),
+      next: () => self.nextLevel(),
+    };
+    this.rule = this.createRule(svc);
+    this.rule.init();
+    this.scene = 'play'; this.sceneT = 0; this.buttons = [];
+    this.audio.ensure();
+    return true;
+  }
+  finishLevel() {
+    const win = this.rule && this.rule.status === 'won';
+    const payload = this.pendingResult || (this.rule && this.rule.result && this.rule.result()) || {};
+    const stars = win ? clamp(Math.round(payload.stars == null ? 1 : payload.stars), 1, 3) : 0;
+    if (win) {
+      this.save.complete(this.levelId, stars, payload.score || 0);
+      if (payload.coins) this.save.addCoins(payload.coins);
+      this.save.data.playSec = (this.save.data.playSec || 0) + Math.round(this.sceneT);
+      this.save.flush();
+    }
+    this.result = { win, stars, payload };
+    this.scene = 'result'; this.sceneT = 0; this.buttons = [];
+  }
+  nextLevel() {
+    const levels = this.content.levels || [];
+    const i = levels.findIndex((l) => l.id === this.levelId);
+    if (i >= 0 && i + 1 < levels.length) return this.startLevel(levels[i + 1].id);
+    this.go('levels');
+    return false;
+  }
+  setPaused(v) { this.paused = !!v; this.sceneT = this.sceneT; this.buttons = []; }
+  toast(msg) {
+    if (!msg) return;
+    this.toasts.push({ msg: String(msg), life: 0, max: 2.2 });
+    if (this.toasts.length > 3) this.toasts.shift();
+  }
+  updateToasts(dt) {
+    for (let i = this.toasts.length - 1; i >= 0; i--) { this.toasts[i].life += dt; if (this.toasts[i].life >= this.toasts[i].max) this.toasts.splice(i, 1); }
+  }
+  /* ---------------------------- 输入分发 ---------------------------- */
+  onDown(x, y) {
+    this.begin();
+    for (let i = this.buttons.length - 1; i >= 0; i--) {
+      const b = this.buttons[i];
+      if (b.disabled) continue;
+      if (x >= b.r.x && x <= b.r.x + b.r.w && y >= b.r.y && y <= b.r.y + b.r.h) {
+        this.audio.sfx('click');
+        this.vibrate(8);
+        b.fn();
+        return;
+      }
+    }
+    if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('down', x, y);
+  }
+  onKey(k) {
+    if (this.scene === 'play') {
+      if (k === 'Escape' || k === 'p' || k === 'P') { this.setPaused(!this.paused); }
+      if (this.rule && !this.paused) this.rule.pointer('key', 0, 0, k);
+    } else if (k === 'Escape' || k === 'Backspace') {
+      if (this.scene === 'levels' || this.scene === 'settings' || this.scene === 'howto') this.go('title');
+      if (this.scene === 'result') this.go('levels');
+    } else if (k === 'Enter' || k === ' ') {
+      if (this.scene === 'title') this.startLevel(this.save.data.unlocked || 1);
+      if (this.scene === 'result' && this.result) { this.result.win ? this.nextLevel() : this.startLevel(this.levelId); }
+    }
+  }
+  vibrate(ms) { try { if (this.save.settings.haptic && navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+
+  /* ---------------------------- 绘制 ---------------------------- */
+  render(dt) {
+    const ctx = this.ctx, W = this.W, H = this.H;
+    this.layout.applyTransform(ctx);
+    ctx.clearRect(0, 0, W, H);
+    this.buttons = [];
+    if (this.scene === 'title') this.drawTitle(ctx);
+    else if (this.scene === 'levels') this.drawLevels(ctx);
+    else if (this.scene === 'play') this.drawPlay(ctx);
+    else if (this.scene === 'result') this.drawResult(ctx);
+    else if (this.scene === 'settings') this.drawSettings(ctx);
+    else if (this.scene === 'howto') this.drawHowto(ctx);
+    if (this.paused && this.scene === 'play') this.drawPause(ctx);
+    this.drawToasts(ctx);
+    this.fx.flashDraw(ctx, W, H);
+  }
+  mkButton(ctx, r, label, fn, o = {}) {
+    this.buttons.push({ r, fn, disabled: !!o.disabled });
+    R.button(ctx, r, label, o);
+  }
+  drawBg(ctx, groundY) {
+    this.art.scene(ctx, this.W, this.H, this.demoT, { groundY });
+  }
+  drawTitle(ctx) {
+    const W = this.W, H = this.H, t = this.demoT, P = this.portrait;
+    const groundY = P ? H * 0.42 : H * 0.60;
+    this.drawBg(ctx, groundY);
+    const pg = ctx.createLinearGradient(0, 0, 0, H);
+    pg.addColorStop(0, 'rgba(0,0,0,.10)'); pg.addColorStop(1, 'rgba(0,0,0,.55)');
+    ctx.fillStyle = pg; ctx.fillRect(0, 0, W, H);
+    // 角色展示（在标题与按钮之间）
+    const art = this.art, n = 4;
+    for (let i = 0; i < n; i++) {
+      const x = W * (0.5 + (i - (n - 1) / 2) * (P ? 0.19 : 0.15));
+      const y = groundY + (i % 2 ? 0 : 8);
+      art.char(ctx, x, y, (P ? 2.1 : 1.8) + (i === 1 ? 0.25 : 0), {
+        kind: i === 2 ? 'enemy' : 'hero', role: ['melee', 'ranged', 'mage', 'heal'][i],
+        facing: i === 2 ? -1 : 1, t: t + i, name: 'showcase' + i, moving: true,
+      });
+    }
+    const titleSize = Math.min(W * 0.085, 92);
+    ctx.save();
+    ctx.font = `900 ${titleSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const y = P ? H * 0.16 : H * 0.21;
+    ctx.lineWidth = titleSize * 0.14; ctx.strokeStyle = 'rgba(8,10,20,.85)'; ctx.lineJoin = 'round';
+    ctx.strokeText(this.content.title, W / 2, y);
+    const tg = ctx.createLinearGradient(0, y - titleSize / 2, 0, y + titleSize / 2);
+    tg.addColorStop(0, '#fff6d8'); tg.addColorStop(0.5, '#ffd76a'); tg.addColorStop(1, '#ff9f43');
+    ctx.fillStyle = tg; ctx.fillText(this.content.title, W / 2, y);
+    ctx.restore();
+    R.text(ctx, this.content.tagline || this.content.subtitle || '', W / 2, y + titleSize * 0.86, {
+      size: Math.min(P ? 20 : 23, W * 0.02), color: 'rgba(255,255,255,.85)', align: 'center', weight: 600,
+    });
+    // 开始按钮
+    const bw = Math.min(W * (P ? 0.62 : 0.34), 460), bh = Math.min(86, H * 0.12);
+    const bx = W / 2 - bw / 2, by = P ? H * 0.50 : H * 0.66;
+    const nextId = Math.min(this.save.data.unlocked || 1, (this.content.levels || []).length || 1);
+    const label = (this.save.data.totalClears || 0) > 0 ? `继续游戏 · 第${nextId}关` : '开始游戏';
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, label, () => this.startLevel(nextId), { size: Math.min(30, bh * 0.38) });
+    // 次级按钮
+    const sw = Math.min(W * (P ? 0.26 : 0.17), 220), sh = Math.min(58, H * 0.085), gap = 16;
+    const y2 = by + bh + (P ? 28 : 18);
+    const labels = [['关卡', () => this.go('levels')], ['玩法', () => this.go('howto')], ['设置', () => this.go('settings')]];
+    const totalW = labels.length * sw + (labels.length - 1) * gap;
+    labels.forEach(([lb, fn], i) => {
+      const x = W / 2 - totalW / 2 + i * (sw + gap);
+      this.mkButton(ctx, { x, y: y2, w: sw, h: sh }, lb, fn, {
+        fill1: 'rgba(255,255,255,.20)', fill2: 'rgba(255,255,255,.10)', color: '#fff', stroke: 'rgba(255,255,255,.35)', size: Math.min(22, sh * 0.4),
+      });
+    });
+    R.text(ctx, '程序化美术 / 合成音频 / 本地存档', W / 2, H - (P ? 40 : 20), { size: 14, color: 'rgba(255,255,255,.45)', align: 'center', weight: 500 });
+  }
+  /* 选关 */
+  drawLevels(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    const titleY = this.portrait ? 76 : 64;
+    R.text(ctx, '选择关卡', W / 2, titleY, { size: 38, align: 'center', color: '#fff', stroke: 'rgba(0,0,0,.5)' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const stars = this.save.totalStars(), maxStars = (this.content.levels || []).length * 3;
+    R.text(ctx, `★ ${stars} / ${maxStars}`, W - 26, titleY, { size: 20, align: 'right', color: '#ffd76a' });
+    const levels = this.content.levels || [];
+    const chapters = this.content.chapters || [{ name: '关卡', levels: levels.map((l) => l.id) }];
+    const top = this.portrait ? 120 : 104;
+    const bottomPad = 24;
+    const rowH = Math.min(this.portrait ? 200 : 108, (H - top - bottomPad) / chapters.length);
+    chapters.forEach((ch, ci) => {
+      const y0 = top + ci * rowH;
+      R.text(ctx, `${ci + 1}. ${ch.name}`, 30, y0 + 14, { size: Math.min(20, rowH * 0.22), color: 'rgba(255,255,255,.7)', weight: 700 });
+      const perRow = this.portrait ? 5 : Math.min(10, ch.levels.length);
+      const cellW = Math.min(this.portrait ? 118 : 104, (W - 60) / perRow);
+      const cellH = Math.min(cellW, rowH - 34);
+      ch.levels.forEach((id, i) => {
+        const col = i % perRow, row = Math.floor(i / perRow);
+        const x = 30 + col * ((W - 60) / perRow) + ((W - 60) / perRow - cellW) / 2;
+        const y = y0 + 28 + row * (cellH + 10);
+        this.levelCell(ctx, levels.find((l) => l.id === id) || { id, name: '第' + id + '关' }, x, y, cellW, cellH);
+      });
+      if (this.portrait && ci === 0) { /* 保持布局 */ }
+    });
+  }
+  levelCell(ctx, lv, x, y, w, h) {
+    const unlocked = this.save.isUnlocked(lv.id);
+    const st = this.save.starOf(lv.id);
+    const r = { x, y, w, h };
+    const isBoss = !!lv.boss;
+    R.panel(ctx, x, y, w, h, {
+      r: 14, fill: unlocked ? (isBoss ? 'rgba(120,40,60,.85)' : 'rgba(32,40,64,.9)') : 'rgba(24,26,36,.75)',
+      stroke: st > 0 ? 'rgba(255,215,106,.65)' : 'rgba(255,255,255,.12)', shadowBlur: 10,
+    });
+    if (!unlocked) {
+      R.icon(ctx, 'lock', x + w / 2, y + h * 0.42, Math.min(w, h) * 0.28, 'rgba(255,255,255,.3)');
+      R.text(ctx, '未解锁', x + w / 2, y + h * 0.78, { size: Math.min(13, w * 0.16), color: 'rgba(255,255,255,.35)', align: 'center' });
+    } else {
+      R.text(ctx, String(lv.id), x + w / 2, y + h * 0.38, { size: Math.min(26, w * 0.3), color: '#fff', align: 'center', weight: 900 });
+      R.text(ctx, lv.name || '', x + w / 2, y + h * 0.64, { size: Math.min(11, w * 0.137), color: 'rgba(255,255,255,.62)', align: 'center', weight: 600 });
+      for (let i = 0; i < 3; i++) R.star(ctx, x + w / 2 + (i - 1) * Math.min(17, w * 0.2), y + h * 0.84, Math.min(7, w * 0.09), i < st);
+    }
+    this.buttons.push({ r, fn: () => { if (unlocked) this.startLevel(lv.id); } });
+  }
+  /* 战斗场景 */
+  drawPlay(ctx) {
+    const W = this.W, H = this.H, rule = this.rule;
+    if (!rule) return;
+    rule.drawWorld(ctx, this.demoT);
+    this.fx.draw(ctx);
+    // 关卡横幅
+    const intro = clamp(1 - this.sceneT / 1.6, 0, 1);
+    if (intro > 0) {
+      const lv = this.content.levels.find((l) => l.id === this.levelId) || {};
+      ctx.globalAlpha = Math.min(1, intro * 1.6);
+      R.text(ctx, `第 ${this.levelId} 关`, W / 2, H * 0.16, { size: 22, align: 'center', color: 'rgba(255,255,255,.8)', weight: 700 });
+      R.text(ctx, lv.name || '', W / 2, H * 0.16 + 34, { size: 34, align: 'center', color: '#fff', stroke: 'rgba(0,0,0,.6)' });
+      ctx.globalAlpha = 1;
+    }
+    rule.drawHUD(ctx, this.demoT);
+    // 暂停按钮：始终最后画，保证在各玩法 HUD 之上可点
+    const pr = { x: W - 74, y: 16, w: 56, h: 56 };
+    R.panel(ctx, pr.x, pr.y, pr.w, pr.h, { r: 14, fill: 'rgba(10,14,24,.62)', stroke: 'rgba(255,255,255,.2)' });
+    R.icon(ctx, 'pause', pr.x + pr.w / 2, pr.y + pr.h / 2, 22, '#fff');
+    this.buttons.push({ r: pr, fn: () => this.setPaused(true) });
+  }
+  /* 暂停 */
+  drawPause(ctx) {
+    const W = this.W, H = this.H;
+    ctx.fillStyle = 'rgba(6,8,16,.66)'; ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W * 0.46, 520), ph = Math.min(H * 0.62, 520);
+    const px = W / 2 - pw / 2, py = H / 2 - ph / 2;
+    R.panel(ctx, px, py, pw, ph, { fill: 'rgba(20,24,44,.97)', stroke: 'rgba(255,255,255,.2)', r: 24 });
+    R.text(ctx, '已暂停', W / 2, py + 58, { size: 34, align: 'center', color: '#fff' });
+    const bw = pw * 0.66, bh = 60, bx = W / 2 - bw / 2;
+    let by = py + 116;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '继续', () => this.setPaused(false), { size: 26 });
+    by += bh + 14;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '重开本关', () => this.startLevel(this.levelId), {
+      fill1: 'rgba(255,255,255,.2)', fill2: 'rgba(255,255,255,.1)', color: '#fff', stroke: 'rgba(255,255,255,.3)', size: 24,
+    });
+    by += bh + 14;
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '返回选关', () => { this.setPaused(false); this.go('levels'); }, {
+      fill1: 'rgba(255,255,255,.2)', fill2: 'rgba(255,255,255,.1)', color: '#fff', stroke: 'rgba(255,255,255,.3)', size: 24,
+    });
+    by += bh + 26;
+    // 音乐/音效开关
+    const tw = (pw - 60) / 2;
+    this.toggle(ctx, px + 20, by, tw, 50, '音乐', this.save.settings.music, (v) => { this.save.setSetting('music', v); this.audio.setMuted('music', !v); });
+    this.toggle(ctx, px + 40 + tw, by, tw, 50, '音效', this.save.settings.sfx, (v) => { this.save.setSetting('sfx', v); this.audio.setMuted('sfx', !v); });
+  }
+  toggle(ctx, x, y, w, h, label, on, fn) {
+    R.panel(ctx, x, y, w, h, { r: 12, fill: on ? 'rgba(255,215,106,.16)' : 'rgba(255,255,255,.06)', stroke: on ? 'rgba(255,215,106,.6)' : 'rgba(255,255,255,.16)', shadow: false });
+    R.text(ctx, label, x + 14, y + h / 2, { size: 18, color: '#fff', weight: 700 });
+    const kr = { x: x + w - 62, y: y + 9, w: 46, h: h - 18 };
+    R.roundRect(ctx, kr.x, kr.y, kr.w, kr.h, kr.h / 2); ctx.fillStyle = on ? '#ffd76a' : 'rgba(255,255,255,.2)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(kr.x + (on ? kr.w - kr.h / 2 : kr.h / 2), kr.y + kr.h / 2, kr.h / 2 - 3, 0, Math.PI * 2);
+    ctx.fillStyle = on ? '#241a06' : '#888'; ctx.fill();
+    this.buttons.push({ r: { x, y, w, h }, fn: () => fn(!on) });
+  }
+  /* 结算 */
+  drawResult(ctx) {
+    const W = this.W, H = this.H, res = this.result || { win: false, stars: 0, payload: {} };
+    const t = this.sceneT;
+    this.drawBg(ctx, H * 0.78);
+    ctx.fillStyle = 'rgba(6,8,16,.62)'; ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W * 0.56, 620), ph = Math.min(H * 0.78, 640);
+    const px = W / 2 - pw / 2, py = H / 2 - ph / 2 + 10;
+    const pop = R.entering(t, 0.4);
+    ctx.save(); ctx.translate(W / 2, py + ph / 2); ctx.scale(0.9 + pop * 0.1, 0.9 + pop * 0.1); ctx.translate(-W / 2, -(py + ph / 2));
+    R.panel(ctx, px, py, pw, ph, { fill: 'rgba(22,26,46,.97)', stroke: res.win ? 'rgba(255,215,106,.5)' : 'rgba(255,93,93,.4)', r: 26, shadowBlur: 32 });
+    R.text(ctx, res.win ? '通关！' : '再战一次', W / 2, py + 62, { size: 42, align: 'center', color: res.win ? '#ffd76a' : '#ff8a8a', stroke: 'rgba(0,0,0,.5)' });
+    R.text(ctx, `第 ${this.levelId} 关`, W / 2, py + 100, { size: 18, align: 'center', color: 'rgba(255,255,255,.55)' });
+    for (let i = 0; i < 3; i++) {
+      const st = res.win && i < res.stars;
+      const delay = 0.35 + i * 0.16;
+      const k = clamp((t - delay) / 0.3, 0, 1);
+      if (k <= 0) continue;
+      ctx.save(); ctx.translate(W / 2 + (i - 1) * 74, py + 170); ctx.scale(0.4 + k * 0.9, 0.4 + k * 0.9); ctx.globalAlpha = k;
+      R.star(ctx, 0, 0, 30, st, { c1: '#fff3b0', c2: '#ffb52e' });
+      ctx.restore();
+    }
+    const p = res.payload || {};
+    const rows = [
+      ['得分', fmt(p.score || 0)],
+      [this.content.resultKillLabel || '击杀', fmt(p.kills || 0)],
+      ['用时', fmtTime(p.time || this.sceneT)],
+    ];
+    rows.forEach(([k1, v], i) => {
+      const y = py + 234 + i * 30;
+      R.text(ctx, k1, px + pw * 0.22, y, { size: 18, color: 'rgba(255,255,255,.55)', weight: 600 });
+      R.text(ctx, v, px + pw * 0.78, y, { size: 20, color: '#fff', align: 'right', weight: 800 });
+    });
+    const bw = pw * 0.68, bh = 62, bx = W / 2 - bw / 2;
+    let by = py + ph - 200;
+    if (res.win) {
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh }, '下一关', () => this.nextLevel(), { size: 26 });
+      by += bh + 12;
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: 52 }, '重玩', () => this.startLevel(this.levelId), {
+        fill1: 'rgba(255,255,255,.18)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 22,
+      });
+      by += 52 + 12;
+    } else {
+      this.mkButton(ctx, { x: bx, y: by, w: bw, h: bh + 8 }, '再来一次', () => this.startLevel(this.levelId), { size: 26 });
+      by += bh + 20;
+    }
+    this.mkButton(ctx, { x: bx, y: by, w: bw, h: 48 }, '返回选关', () => this.go('levels'), {
+      fill1: 'rgba(255,255,255,.06)', fill2: 'rgba(255,255,255,.03)', color: 'rgba(255,255,255,.8)', stroke: 'rgba(255,255,255,.16)', size: 20,
+    });
+    ctx.restore();
+  }
+  /* 设置 */
+  drawSettings(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    R.text(ctx, '设置', W / 2, 66, { size: 38, align: 'center', color: '#fff' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const w = Math.min(W * 0.62, 620), x = W / 2 - w / 2;
+    let y = 140;
+    this.toggle(ctx, x, y, w, 62, '音乐', this.save.settings.music, (v) => { this.save.setSetting('music', v); this.audio.setMuted('music', !v); }); y += 74;
+    this.toggle(ctx, x, y, w, 62, '音效', this.save.settings.sfx, (v) => { this.save.setSetting('sfx', v); this.audio.setMuted('sfx', !v); }); y += 74;
+    this.toggle(ctx, x, y, w, 62, '震动反馈', this.save.settings.haptic, (v) => this.save.setSetting('haptic', v)); y += 90;
+    this.mkButton(ctx, { x, y, w, h: 56 }, '清除存档', () => { if (typeof confirm === 'function' && confirm('确定清空本机进度？')) { this.save.reset(); this.toast('已清除'); } }, {
+      fill1: 'rgba(255,93,93,.35)', fill2: 'rgba(200,40,60,.35)', color: '#fff', stroke: 'rgba(255,120,120,.5)', size: 22,
+    });
+    y += 76;
+    R.text(ctx, '存档只保存在本机浏览器；换设备不会同步。', W / 2, y, { size: 15, align: 'center', color: 'rgba(255,255,255,.45)', weight: 500 });
+    R.text(ctx, '程序化美术 + 程序化音乐音效', W / 2, y + 26, { size: 15, align: 'center', color: 'rgba(255,255,255,.35)', weight: 500 });
+  }
+  /* 说明 */
+  drawHowto(ctx) {
+    const W = this.W, H = this.H;
+    R.gradient(ctx, W, H, ['#12162a', '#1d1730', '#0c0e18']);
+    R.text(ctx, '玩法说明', W / 2, 66, { size: 38, align: 'center', color: '#fff' });
+    this.mkButton(ctx, { x: 22, y: 20, w: 62, h: 62 }, '←', () => this.go('title'), {
+      fill1: 'rgba(255,255,255,.16)', fill2: 'rgba(255,255,255,.08)', color: '#fff', stroke: 'rgba(255,255,255,.25)', size: 26,
+    });
+    const help = this.content.help || {};
+    const w = Math.min(W * 0.74, 820), x = W / 2 - w / 2;
+    R.panel(ctx, x, 116, w, H - 168, { r: 20, fill: 'rgba(255,255,255,.055)', stroke: 'rgba(255,255,255,.12)', shadow: false });
+    let y = 152;
+    R.text(ctx, '目标', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of wrapLines(ctx, help.goal || '', w - 56, 18)) { R.text(ctx, line, x + 28, y, { size: 18, color: '#fff', weight: 600 }); y += 28; }
+    y += 14;
+    R.text(ctx, '操作', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of help.controls || []) { R.text(ctx, '· ' + line, x + 28, y, { size: 17, color: 'rgba(255,255,255,.85)', weight: 600 }); y += 28; }
+    y += 14;
+    R.text(ctx, '小提示', x + 28, y, { size: 20, color: '#ffd76a' }); y += 30;
+    for (const line of help.tips || []) {
+      for (const l2 of wrapLines(ctx, '· ' + line, w - 56, 17)) { R.text(ctx, l2, x + 28, y, { size: 17, color: 'rgba(255,255,255,.7)', weight: 500 }); y += 26; }
+    }
+  }
+  drawToasts(ctx) {
+    const W = this.W;
+    this.toasts.forEach((tt, i) => {
+      const k = tt.life / tt.max;
+      const a = k < 0.15 ? k / 0.15 : k > 0.75 ? (1 - k) / 0.25 : 1;
+      ctx.globalAlpha = Math.max(0, Math.min(1, a));
+      const w = Math.min(W * 0.6, R.measure(ctx, tt.msg, 20, 700) + 56);
+      const y = this.H * 0.2 + i * 52;
+      R.panel(ctx, W / 2 - w / 2, y, w, 44, { r: 22, fill: 'rgba(10,14,24,.86)', stroke: 'rgba(255,215,106,.35)', shadowBlur: 8 });
+      R.text(ctx, tt.msg, W / 2, y + 22, { size: 19, align: 'center', color: '#ffe9b0', weight: 700 });
+      ctx.globalAlpha = 1;
+    });
+  }
+}
+
+function wrapLines(ctx, str, maxW, size) {
+  const out = [];
+  let line = '';
+  for (const ch of String(str)) {
+    const test = line + ch;
+    if (R.measure(ctx, test, size, 600) > maxW && line) { out.push(line); line = ch; }
+    else line = test;
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+return { App };
+})();
+__m["js/content.js"] = (function(){
+/* =========================================================================
+ * content.js —— 全部玩法内容数据（由「游戏工坊」生成，可直接手改）
+ * 主题：厨房餐厅 · 基因：merge · 关卡：24
+ * 改完运行：node tools/build-single.mjs && node tools/check.mjs
+ * ========================================================================= */
+
+const CONTENT = {
+  "slug": "merge-dev",
+  "genre": "merge",
+  "title": "火锅店合成记",
+  "subtitle": "厨房餐厅 · 采购员的冒险",
+  "tagline": "同级单位两两合成，越合越强；自动攻击来敌，守住底线。",
+  "orientation": "portrait",
+  "config": {
+    "seed": 202101286,
+    "maxLevel": 24
+  },
+  "theme": {
+    "id": "kitchen",
+    "name": "厨房餐厅",
+    "mood": "day",
+    "keywords": [
+      "厨房",
+      "餐厅",
+      "美食",
+      "厨师",
+      "做饭",
+      "料理",
+      "小吃",
+      "火锅",
+      "甜品",
+      "奶茶",
+      "早餐",
+      "面包",
+      "kitchen",
+      "cook",
+      "food",
+      "restaurant"
+    ],
+    "palette": {
+      "sky": [
+        "#fff1d6",
+        "#ffd9b0"
+      ],
+      "ground": "#b5651d",
+      "groundDark": "#7a3f12",
+      "accent": "#ff6b35",
+      "accent2": "#ffd166",
+      "hero": "#ffe9c7",
+      "hero2": "#c98a4b",
+      "enemy": "#8f5a3c",
+      "enemy2": "#52301c",
+      "gold": "#ffc93c",
+      "danger": "#e63946",
+      "ok": "#7bd389",
+      "ui": "rgba(60,32,16,.85)",
+      "ui2": "rgba(255,255,255,.16)",
+      "ink": "#3a1f10",
+      "text": "#ffffff"
+    },
+    "music": {
+      "root": -4,
+      "scale": [
+        0,
+        2,
+        4,
+        7,
+        9
+      ],
+      "tempo": 112
+    },
+    "vocab": {
+      "hero": [
+        "帮厨",
+        "厨师长",
+        "面点师",
+        "服务员",
+        "采购员",
+        "甜点师"
+      ],
+      "enemy": [
+        "老鼠",
+        "蟑螂",
+        "挑剔客",
+        "差评师",
+        "食安员",
+        "隔壁老板"
+      ],
+      "boss": [
+        "美食评论家",
+        "米其林密探",
+        "大胃王",
+        "黑心供应商"
+      ],
+      "building": [
+        "灶台",
+        "蒸笼",
+        "冰柜",
+        "收银台",
+        "外卖窗口",
+        "后厨"
+      ],
+      "item": [
+        "面团",
+        "辣椒",
+        "鸡蛋",
+        "青菜",
+        "汤底",
+        "糖霜",
+        "烤串",
+        "饭盒"
+      ],
+      "place": [
+        "大排档",
+        "面馆",
+        "火锅店",
+        "甜品铺",
+        "美食街",
+        "后巷"
+      ],
+      "power": [
+        "大火爆炒",
+        "秘制酱料",
+        "摆盘",
+        "免费加料",
+        "外卖加速",
+        "招牌菜"
+      ],
+      "currency": "营业额"
+    }
+  },
+  "chapters": [
+    {
+      "name": "后巷",
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    },
+    {
+      "name": "火锅店",
+      "levels": [
+        6,
+        7,
+        8,
+        9,
+        10
+      ]
+    },
+    {
+      "name": "甜品铺",
+      "levels": [
+        11,
+        12,
+        13,
+        14,
+        15
+      ]
+    },
+    {
+      "name": "美食街",
+      "levels": [
+        16,
+        17,
+        18,
+        19,
+        20
+      ]
+    },
+    {
+      "name": "大排档",
+      "levels": [
+        21,
+        22,
+        23,
+        24
+      ]
+    }
+  ],
+  "help": {
+    "goal": "用「营业额」召唤单位，两个同级合体升一级（最高 6 级）；单位自动向中路来敌射击。敌人走到城门会扣基地耐久，耐久归零即失败，坚持到最后一波全灭就算通关。",
+    "controls": [
+      "点「召唤」：花 10 营业额，在随机空格生成 1 级单位",
+      "点一个单位选中（高亮），再点另一个同级单位 → 合体升级",
+      "点选后点空位 / 不同级单位 → 交换位置；也能直接拖动单位",
+      "点「出售」把选中的单位换回部分金币，用来腾格子"
+    ],
+    "tips": [
+      "合并永远是赚的：两个同级合成后攻击与射程都会变强",
+      "上排格子离路更近，射程覆盖更远，优先把主力放上排",
+      "金币只来自击杀：输出越高滚雪球越快，别把 营业额 一直攒着",
+      "棋盘满且暂时合不动时，先把低级单位卖掉腾格子",
+      "星级看基地剩余耐久：掉血越少，结算星级越高",
+      "每 5 关是 Boss 关（红色格子），留好高等级单位再开波"
+    ]
+  },
+  "defs": {
+    "board": {
+      "name": "灶台",
+      "cols": 5,
+      "rows": 2,
+      "summonCost": 10,
+      "maxTier": 6,
+      "currency": "营业额"
+    },
+    "tiers": [
+      {
+        "tier": 1,
+        "name": "帮厨",
+        "atk": 7,
+        "cd": 0.62,
+        "range": 382,
+        "sell": 4
+      },
+      {
+        "tier": 2,
+        "name": "厨师长",
+        "atk": 16,
+        "cd": 0.6,
+        "range": 404,
+        "sell": 8
+      },
+      {
+        "tier": 3,
+        "name": "面点师",
+        "atk": 35,
+        "cd": 0.58,
+        "range": 426,
+        "sell": 16
+      },
+      {
+        "tier": 4,
+        "name": "服务员",
+        "atk": 74,
+        "cd": 0.56,
+        "range": 449,
+        "sell": 32
+      },
+      {
+        "tier": 5,
+        "name": "采购员",
+        "atk": 155,
+        "cd": 0.54,
+        "range": 472,
+        "sell": 64
+      },
+      {
+        "tier": 6,
+        "name": "甜点师",
+        "atk": 330,
+        "cd": 0.52,
+        "range": 496,
+        "sell": 128
+      }
+    ],
+    "enemies": [
+      {
+        "id": "grunt",
+        "name": "老鼠",
+        "hp": 30,
+        "speed": 46,
+        "gold": 6,
+        "dmg": 9,
+        "r": 13,
+        "gap": 0.7,
+        "boss": false
+      },
+      {
+        "id": "runner",
+        "name": "蟑螂",
+        "hp": 24,
+        "speed": 78,
+        "gold": 6,
+        "dmg": 8,
+        "r": 11,
+        "gap": 0.45,
+        "boss": false
+      },
+      {
+        "id": "brute",
+        "name": "挑剔客",
+        "hp": 100,
+        "speed": 34,
+        "gold": 14,
+        "dmg": 15,
+        "r": 17,
+        "gap": 0.95,
+        "boss": false
+      },
+      {
+        "id": "boss1",
+        "name": "美食评论家",
+        "hp": 460,
+        "speed": 30,
+        "gold": 66,
+        "dmg": 40,
+        "r": 26,
+        "gap": 1,
+        "boss": true
+      },
+      {
+        "id": "boss2",
+        "name": "米其林密探",
+        "hp": 460,
+        "speed": 30,
+        "gold": 66,
+        "dmg": 40,
+        "r": 26,
+        "gap": 1,
+        "boss": true
+      },
+      {
+        "id": "boss3",
+        "name": "大胃王",
+        "hp": 460,
+        "speed": 30,
+        "gold": 66,
+        "dmg": 40,
+        "r": 26,
+        "gap": 1,
+        "boss": true
+      },
+      {
+        "id": "boss4",
+        "name": "黑心供应商",
+        "hp": 460,
+        "speed": 30,
+        "gold": 66,
+        "dmg": 40,
+        "r": 26,
+        "gap": 1,
+        "boss": true
+      }
+    ]
+  },
+  "levels": [
+    {
+      "id": 1,
+      "chapter": 1,
+      "name": "老鼠来袭",
+      "boss": false,
+      "baseHp": 90,
+      "startGold": 40,
+      "summonCost": 10,
+      "scale": {
+        "hp": 0.9,
+        "bossHp": 1,
+        "speed": 0.92,
+        "gold": 1
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 2,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 17,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 4,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 29,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "chapter": 1,
+      "name": "老鼠成群",
+      "boss": false,
+      "baseHp": 94,
+      "startGold": 45,
+      "summonCost": 10,
+      "scale": {
+        "hp": 1.161,
+        "bossHp": 1,
+        "speed": 0.934,
+        "gold": 1.033
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 3,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 17,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 4,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 29,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "chapter": 1,
+      "name": "老鼠出没",
+      "boss": false,
+      "baseHp": 98,
+      "startGold": 50,
+      "summonCost": 10,
+      "scale": {
+        "hp": 1.479,
+        "bossHp": 1,
+        "speed": 0.948,
+        "gold": 1.065
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 3,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 17,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 29,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "chapter": 1,
+      "name": "老鼠压境",
+      "boss": false,
+      "baseHp": 102,
+      "startGold": 55,
+      "summonCost": 10,
+      "scale": {
+        "hp": 1.823,
+        "bossHp": 1,
+        "speed": 0.962,
+        "gold": 1.098
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 4,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 16,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 27,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "chapter": 1,
+      "name": "美食评论家",
+      "boss": true,
+      "baseHp": 106,
+      "startGold": 60,
+      "summonCost": 10,
+      "scale": {
+        "hp": 2.284,
+        "bossHp": 3.652,
+        "speed": 0.976,
+        "gold": 1.13
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 4,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 16,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 27,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 38,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 9,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 49,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "boss1",
+              "count": 1,
+              "gap": 1,
+              "delay": 0
+            }
+          ],
+          "boss": true
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "chapter": 2,
+      "name": "蟑螂来袭",
+      "boss": false,
+      "baseHp": 110,
+      "startGold": 65,
+      "summonCost": 10,
+      "scale": {
+        "hp": 2.56,
+        "bossHp": 1,
+        "speed": 0.99,
+        "gold": 1.163
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 16,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 27,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 4,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 38,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 4,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "chapter": 2,
+      "name": "蟑螂成群",
+      "boss": false,
+      "baseHp": 113,
+      "startGold": 70,
+      "summonCost": 10,
+      "scale": {
+        "hp": 2.947,
+        "bossHp": 1,
+        "speed": 1.003,
+        "gold": 1.196
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 16,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 27,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 4,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 38,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 4,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "chapter": 2,
+      "name": "蟑螂出没",
+      "boss": false,
+      "baseHp": 117,
+      "startGold": 75,
+      "summonCost": 10,
+      "scale": {
+        "hp": 3.344,
+        "bossHp": 1,
+        "speed": 1.017,
+        "gold": 1.228
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 16,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 7,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 27,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 4,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 38,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "chapter": 2,
+      "name": "蟑螂压境",
+      "boss": false,
+      "baseHp": 121,
+      "startGold": 80,
+      "summonCost": 10,
+      "scale": {
+        "hp": 3.75,
+        "bossHp": 1,
+        "speed": 1.031,
+        "gold": 1.261
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 16,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 7,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 27,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 38,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "chapter": 2,
+      "name": "米其林密探",
+      "boss": true,
+      "baseHp": 125,
+      "startGold": 85,
+      "summonCost": 10,
+      "scale": {
+        "hp": 4.263,
+        "bossHp": 4.217,
+        "speed": 1.045,
+        "gold": 1.293
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 16,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 8,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 27,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 38,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 49,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "boss2",
+              "count": 1,
+              "gap": 1,
+              "delay": 0
+            }
+          ],
+          "boss": true
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "chapter": 3,
+      "name": "挑剔客来袭",
+      "boss": false,
+      "baseHp": 129,
+      "startGold": 90,
+      "summonCost": 10,
+      "scale": {
+        "hp": 4.584,
+        "bossHp": 1,
+        "speed": 1.059,
+        "gold": 1.326
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 16,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 8,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 27,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 38,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 49,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "chapter": 3,
+      "name": "挑剔客成群",
+      "boss": false,
+      "baseHp": 133,
+      "startGold": 95,
+      "summonCost": 10,
+      "scale": {
+        "hp": 5.01,
+        "bossHp": 1,
+        "speed": 1.073,
+        "gold": 1.359
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 16,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 9,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 27,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 38,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 49,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "chapter": 3,
+      "name": "挑剔客出没",
+      "boss": false,
+      "baseHp": 137,
+      "startGold": 100,
+      "summonCost": 10,
+      "scale": {
+        "hp": 5.443,
+        "bossHp": 1,
+        "speed": 1.087,
+        "gold": 1.391
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 9,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 4,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 4,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "chapter": 3,
+      "name": "挑剔客压境",
+      "boss": false,
+      "baseHp": 141,
+      "startGold": 105,
+      "summonCost": 10,
+      "scale": {
+        "hp": 5.881,
+        "bossHp": 1,
+        "speed": 1.101,
+        "gold": 1.424
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 8,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 9,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 4,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "chapter": 3,
+      "name": "大胃王",
+      "boss": true,
+      "baseHp": 145,
+      "startGold": 110,
+      "summonCost": 10,
+      "scale": {
+        "hp": 6.424,
+        "bossHp": 4.783,
+        "speed": 1.115,
+        "gold": 1.457
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 8,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 10,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 4,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        },
+        {
+          "at": 55,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "boss3",
+              "count": 1,
+              "gap": 1,
+              "delay": 0
+            }
+          ],
+          "boss": true
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "chapter": 4,
+      "name": "挑剔客来袭",
+      "boss": false,
+      "baseHp": 149,
+      "startGold": 115,
+      "summonCost": 10,
+      "scale": {
+        "hp": 6.772,
+        "bossHp": 1,
+        "speed": 1.129,
+        "gold": 1.489
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 9,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 10,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "chapter": 4,
+      "name": "挑剔客成群",
+      "boss": false,
+      "baseHp": 153,
+      "startGold": 120,
+      "summonCost": 10,
+      "scale": {
+        "hp": 7.224,
+        "bossHp": 1,
+        "speed": 1.143,
+        "gold": 1.522
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 9,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 11,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 7,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "chapter": 4,
+      "name": "挑剔客出没",
+      "boss": false,
+      "baseHp": 157,
+      "startGold": 125,
+      "summonCost": 10,
+      "scale": {
+        "hp": 7.681,
+        "bossHp": 1,
+        "speed": 1.157,
+        "gold": 1.554
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 10,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 11,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 7,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 7,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "chapter": 4,
+      "name": "挑剔客压境",
+      "boss": false,
+      "baseHp": 160,
+      "startGold": 130,
+      "summonCost": 10,
+      "scale": {
+        "hp": 8.142,
+        "bossHp": 1,
+        "speed": 1.17,
+        "gold": 1.587
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 10,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 11,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 7,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 7,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        },
+        {
+          "at": 55,
+          "hpMul": 2.8,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 2.4
+            },
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 4.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "chapter": 4,
+      "name": "黑心供应商",
+      "boss": true,
+      "baseHp": 164,
+      "startGold": 135,
+      "summonCost": 10,
+      "scale": {
+        "hp": 8.706,
+        "bossHp": 5.348,
+        "speed": 1.184,
+        "gold": 1.62
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 10,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 12,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 7,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 8,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 7,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 5,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 5,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        },
+        {
+          "at": 55,
+          "hpMul": 2.8,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 2.4
+            },
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 4.8
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "boss4",
+              "count": 1,
+              "gap": 1,
+              "delay": 0
+            }
+          ],
+          "boss": true
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "chapter": 5,
+      "name": "挑剔客来袭",
+      "boss": false,
+      "baseHp": 168,
+      "startGold": 140,
+      "summonCost": 10,
+      "scale": {
+        "hp": 9.075,
+        "bossHp": 1,
+        "speed": 1.198,
+        "gold": 1.652
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 11,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 12,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 7,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 8,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 7,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        },
+        {
+          "at": 55,
+          "hpMul": 2.8,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 2.4
+            },
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 4.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "chapter": 5,
+      "name": "挑剔客成群",
+      "boss": false,
+      "baseHp": 172,
+      "startGold": 145,
+      "summonCost": 10,
+      "scale": {
+        "hp": 9.546,
+        "bossHp": 1,
+        "speed": 1.212,
+        "gold": 1.685
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 11,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 13,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 7,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 8,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 8,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 5,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        },
+        {
+          "at": 55,
+          "hpMul": 2.8,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 2.4
+            },
+            {
+              "type": "runner",
+              "count": 7,
+              "gap": 0.45,
+              "delay": 4.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "chapter": 5,
+      "name": "挑剔客出没",
+      "boss": false,
+      "baseHp": 176,
+      "startGold": 150,
+      "summonCost": 10,
+      "scale": {
+        "hp": 10.022,
+        "bossHp": 1,
+        "speed": 1.226,
+        "gold": 1.717
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 12,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 13,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 8,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 8,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 8,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        },
+        {
+          "at": 55,
+          "hpMul": 2.8,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 2.4
+            },
+            {
+              "type": "runner",
+              "count": 7,
+              "gap": 0.45,
+              "delay": 4.8
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "chapter": 5,
+      "name": "美食评论家",
+      "boss": true,
+      "baseHp": 180,
+      "startGold": 155,
+      "summonCost": 10,
+      "scale": {
+        "hp": 10.6,
+        "bossHp": 5.8,
+        "speed": 1.24,
+        "gold": 1.75
+      },
+      "waves": [
+        {
+          "at": 5,
+          "hpMul": 0.55,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 12,
+              "gap": 0.7,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 15,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 14,
+              "gap": 0.45,
+              "delay": 0
+            }
+          ]
+        },
+        {
+          "at": 25,
+          "hpMul": 1.45,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 8,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 35,
+          "hpMul": 1.9,
+          "groups": [
+            {
+              "type": "grunt",
+              "count": 9,
+              "gap": 0.7,
+              "delay": 0
+            },
+            {
+              "type": "runner",
+              "count": 8,
+              "gap": 0.45,
+              "delay": 2.4
+            }
+          ]
+        },
+        {
+          "at": 45,
+          "hpMul": 2.35,
+          "groups": [
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 0
+            },
+            {
+              "type": "brute",
+              "count": 6,
+              "gap": 0.95,
+              "delay": 2.4
+            },
+            {
+              "type": "grunt",
+              "count": 6,
+              "gap": 0.7,
+              "delay": 4.8
+            }
+          ]
+        },
+        {
+          "at": 55,
+          "hpMul": 2.8,
+          "groups": [
+            {
+              "type": "brute",
+              "count": 7,
+              "gap": 0.95,
+              "delay": 0
+            },
+            {
+              "type": "grunt",
+              "count": 7,
+              "gap": 0.7,
+              "delay": 2.4
+            },
+            {
+              "type": "runner",
+              "count": 6,
+              "gap": 0.45,
+              "delay": 4.8
+            }
+          ]
+        },
+        {
+          "at": 65,
+          "hpMul": 1,
+          "groups": [
+            {
+              "type": "boss1",
+              "count": 1,
+              "gap": 1,
+              "delay": 0
+            }
+          ],
+          "boss": true
+        }
+      ]
+    }
+  ],
+  "saveDefaults": {}
+};
+
+return { CONTENT };
+})();
+__m["js/rules/merge.js"] = (function(){
+/* =========================================================================
+ * rules/merge.js —— 合成塔防（Merge TD，portrait 720x1280）
+ *   底部 2x5 合成棋盘：花金币「召唤」1 级单位，两个同级合体升级（1→6 级）；
+ *   棋盘单位自动向中路来敌射击；敌人沿路走向城门，抵达扣基地血量。
+ *   胜利 = 清完所有波次；失败 = 基地血量归零；星级按基地剩余血量。
+ *   纯逻辑 update()/bot()（无 DOM / 无 Math.random），纯绘制 drawWorld()/drawHUD()
+ * ========================================================================= */
+const { clamp, dist, RNG } = __m["js/core.js"];
+
+const { roundRect, text, bar } = __m["js/render.js"];
+
+
+/* ------------------------------ 布局常量（720x1280） ------------------------------ */
+const GROUND_Y = 172;
+const BASE = { x: 360, y: 704 };
+const ROAD_W = 130;
+/* 敌人路线：从上方路口一路折返走向城门 */
+const ROAD = [{ x: 360, y: 186 }, { x: 360, y: 300 }, { x: 180, y: 375 }, { x: 180, y: 500 },
+  { x: 540, y: 570 }, { x: 540, y: 648 }, { x: 360, y: 704 }];
+const BOARD = { x: 20, y: 750, w: 680, h: 314 };
+const CELL = { w: 120, h: 118, gx: 10, gy: 12, x0: 40, y0: 800 };
+const BTN = { summon: { x: 24, y: 1082, w: 424, h: 92 }, sell: { x: 464, y: 1082, w: 232, h: 92 } };
+const HUD = { gold: { x: 16, y: 10, w: 184, h: 48 }, wave: { x: 260, y: 10, w: 200, h: 48 },
+  kill: { x: 470, y: 10, w: 176, h: 48 }, hp: { x: 76, y: 70, w: 470, h: 22 } };
+
+/* 路线预计算（分段 + 累计长度） */
+const SEG = [];
+let ROAD_LEN = 0;
+for (let i = 0; i < ROAD.length - 1; i++) {
+  const a = ROAD[i], b = ROAD[i + 1];
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  SEG.push({ a, b, len, s0: ROAD_LEN, nx: -(b.y - a.y) / len, ny: (b.x - a.x) / len });
+  ROAD_LEN += len;
+}
+function pathAt(s) {
+  s = clamp(s, 0, ROAD_LEN);
+  let i = 0;
+  while (i < SEG.length - 1 && s > SEG[i].s0 + SEG[i].len) i++;
+  const g = SEG[i], k = clamp((s - g.s0) / g.len, 0, 1);
+  return { x: g.a.x + (g.b.x - g.a.x) * k, y: g.a.y + (g.b.y - g.a.y) * k, nx: g.nx, ny: g.ny };
+}
+
+const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+
+function createRule(svc) {
+  const { content, level, W, H, audio, fx } = svc;
+  const art = svc.art;
+  const D = content.defs;
+  const rng = svc.rng;
+  const view = new RNG('merge-view:' + level.id); // 仅用于屏幕震动/星尘，不污染玩法随机
+  const pal = (content.theme && content.theme.palette) || {};
+  const C = {
+    accent: '#ffcf5c', accent2: '#ff7a59', gold: '#ffd76a', danger: '#ff5d5d', ok: '#62d68f',
+    hero: '#8fd3ff', hero2: '#3f7ea8', enemy: '#c85a6a', enemy2: '#6f2436',
+    ground: '#3b2b3f', groundDark: '#211827', ui: 'rgba(14,18,32,.86)', ink: '#0d1024', text: '#ffffff',
+    ...pal,
+  };
+  const TIERS = D.tiers;
+  const MAXT = TIERS.length;
+  const COST = level.summonCost || D.board.summonCost || 10;
+  const CUR = (D.board && D.board.currency) || '金币';
+  const TIER_COLORS = [C.hero, C.ok, C.accent, C.accent2, C.gold, C.danger];
+
+  /* ------------------------------ 状态 ------------------------------ */
+  const enemies = [], shots = [];
+  const cells = [];
+  const state = {
+    gold: level.startGold || 40, baseHp: level.baseHp || 100, baseHpMax: level.baseHp || 100,
+    time: 0, kills: 0, leaked: 0, summons: 0, merges: 0, bestTier: 1,
+    spawned: 0, spawnIdx: 0, winT: 0, gateFlash: 0, summonCd: 0,
+    sel: -1, drag: null, hover: -1,
+  };
+  const schedule = [];
+  (level.waves || []).forEach((w) => {
+    (w.groups || []).forEach((g) => {
+      for (let i = 0; i < (g.count || 0); i++) {
+        schedule.push({ t: (w.at || 0) + (g.delay || 0) + i * (g.gap || 0.8), type: g.type, boss: !!w.boss, mul: w.hpMul || 1 });
+      }
+    });
+  });
+  schedule.sort((a, b) => a.t - b.t);
+
+  const tierOf = (t) => TIERS[clamp(t, 1, MAXT) - 1];
+  const enemyDef = (id) => D.enemies.find((e) => e.id === id) || D.enemies[0];
+  const sellValue = (tier) => Math.max(2, Math.round(COST * Math.pow(2, tier - 1) * 0.4));
+  const mergeBonus = (tier) => 1 + tier * 2;
+  const cxp = (c) => c.x + CELL.w / 2;
+  const cyp = (c) => c.y + CELL.h * 0.60;
+
+  /* ------------------------------ 棋盘动作 ------------------------------ */
+  function summon() {
+    if (rule.status !== 'playing' || state.summonCd > 0) return false;
+    const empties = cells.filter((c) => !c.unit);
+    if (!empties.length) { svc.toast('棋盘已满：先合成或出售'); audio.sfx('warn'); state.summonCd = 0.3; return false; }
+    if (state.gold < COST) { svc.toast(CUR + '不足（需要 ' + COST + '）'); audio.sfx('warn'); state.summonCd = 0.3; return false; }
+    state.gold -= COST;
+    const c = empties[(rng.next() * empties.length) | 0];
+    c.unit = { tier: 1, cdT: rng.range(0.1, 0.45), pop: 1 };
+    state.summons++;
+    state.summonCd = 0.05;
+    audio.sfx('build');
+    fx.ring(cxp(c), cyp(c) - 18, TIER_COLORS[0], 10, { grow: 150, max: 0.35 });
+    fx.burst(cxp(c), cyp(c) - 18, 10, { color: TIER_COLORS[0], up: 130, speed: 150 });
+    return true;
+  }
+
+  function mergeCells(a, b, tier) {
+    const nt = tier + 1;
+    cells[b].unit = { tier: nt, cdT: 0.28, pop: 1.5 };
+    cells[a].unit = null;
+    state.merges++;
+    if (nt > state.bestTier) state.bestTier = nt;
+    const bonus = mergeBonus(nt);
+    state.gold += bonus;
+    audio.sfx('merge'); audio.sfx('coin');
+    fx.ring(cxp(cells[b]), cyp(cells[b]) - 16, TIER_COLORS[nt - 1], 16, { grow: 300, max: 0.5 });
+    fx.burst(cxp(cells[b]), cyp(cells[b]) - 16, 20 + nt * 3, { color: TIER_COLORS[nt - 1], up: 100, speed: 230 });
+    fx.text(cxp(cells[b]), cyp(cells[b]) - 62, 'Lv.' + nt + ' +' + bonus, C.gold, nt >= 5 ? 26 : 20);
+    fx.shake(nt >= 5 ? 5 : 2);
+    if (nt >= 5) fx.flash(0.16);
+    return true;
+  }
+
+  function swapCells(a, b) {
+    const t = cells[a].unit;
+    cells[a].unit = cells[b].unit;
+    cells[b].unit = t;
+    audio.sfx('click');
+    fx.ring(cxp(cells[b]), cyp(cells[b]) - 16, 'rgba(255,255,255,.5)', 14, { grow: 120, max: 0.28 });
+  }
+
+  /* 把 a 的单位合并/换位到 b */
+  function resolve(a, b) {
+    if (a === b || a < 0 || b < 0) { state.sel = -1; return false; }
+    const ua = cells[a].unit;
+    if (!ua) { state.sel = -1; return false; }
+    const ub = cells[b].unit;
+    state.sel = -1;
+    if (ub && ub.tier === ua.tier) {
+      if (ua.tier >= MAXT) { svc.toast('已经是最高级 Lv.' + MAXT); audio.sfx('warn'); return false; }
+      return mergeCells(a, b, ua.tier);
+    }
+    swapCells(a, b);
+    return true;
+  }
+
+  function sellSelected() {
+    if (state.sel < 0 || !cells[state.sel] || !cells[state.sel].unit) { svc.toast('先点选一个单位'); audio.sfx('warn'); return false; }
+    const c = cells[state.sel];
+    const v = sellValue(c.unit.tier);
+    state.gold += v;
+    state.sel = -1;
+    audio.sfx('coin');
+    fx.burst(cxp(c), cyp(c) - 16, 12, { color: C.gold, up: 90, speed: 150 });
+    fx.text(cxp(c), cyp(c) - 50, '+' + v, C.gold, 20);
+    c.unit = null;
+    return true;
+  }
+
+  /* ------------------------------ 敌人 ------------------------------ */
+  function spawnEnemy(def, bossWave, mul) {
+    const sc = level.scale || { hp: 1, speed: 1, gold: 1, bossHp: 1 };
+    const hp = Math.round(def.hp * sc.hp * (mul || 1) * (def.boss ? (sc.bossHp || 1) : 1));
+    const e = {
+      id: def.id, name: def.name, boss: !!(def.boss || bossWave), def,
+      s: 0, x: ROAD[0].x, y: ROAD[0].y, off: rng.range(-42, 42), r: def.r || 13,
+      hp, maxHp: hp, speed: def.speed * sc.speed, gold: Math.max(1, Math.round(def.gold * sc.gold)),
+      dmg: def.dmg || 8, flash: 0, seed: rng.range(0, 9), dead: false,
+    };
+    enemies.push(e);
+    state.spawned++;
+  }
+
+  function hurtEnemy(e, dmg) {
+    e.hp -= dmg; e.flash = 0.1;
+    if (e.hp <= 0 && !e.dead) {
+      e.dead = true;
+      state.kills++;
+      state.gold += e.gold;
+      audio.sfx(e.boss ? 'explode' : 'coin');
+      fx.burst(e.x, e.y - 14, e.boss ? 34 : 9, { color: e.boss ? C.accent2 : C.enemy, up: 60, speed: e.boss ? 300 : 170 });
+      fx.text(e.x, e.y - 34, '+' + e.gold, C.gold, e.boss ? 28 : 15);
+      if (e.boss) { fx.shake(13); fx.flash(0.45); }
+    }
+  }
+
+  function leak(e) {
+    state.baseHp -= e.dmg;
+    state.leaked++;
+    state.gateFlash = 1;
+    if (state.baseHp < 0) state.baseHp = 0;
+    audio.sfx('punch');
+    fx.shake(7);
+    fx.burst(BASE.x, BASE.y - 30, 16, { color: C.danger, up: 90, speed: 230 });
+    fx.text(BASE.x, BASE.y - 96, '-' + e.dmg, C.danger, 24);
+    e.dead = true;
+  }
+
+  /* ------------------------------ 更新 ------------------------------ */
+  function update(dt) {
+    if (rule.status !== 'playing') return;
+    state.time += dt;
+    if (state.summonCd > 0) state.summonCd -= dt;
+    if (state.gateFlash > 0) state.gateFlash = Math.max(0, state.gateFlash - dt * 2.4);
+
+    while (state.spawnIdx < schedule.length && schedule[state.spawnIdx].t <= state.time) {
+      const s = schedule[state.spawnIdx++];
+      spawnEnemy(enemyDef(s.type), s.boss, s.mul);
+    }
+
+    /* 敌人沿路前进 */
+    for (const e of enemies) {
+      if (e.dead) continue;
+      e.flash = Math.max(0, e.flash - dt);
+      e.s += e.speed * dt;
+      if (e.s >= ROAD_LEN) { e.s = ROAD_LEN; leak(e); continue; }
+      const p = pathAt(e.s);
+      e.x = p.x + p.nx * e.off; e.y = p.y + p.ny * e.off; e.nx = p.nx; e.ny = p.ny;
+    }
+
+    /* 棋盘单位射击 */
+    for (const c of cells) {
+      const u = c.unit;
+      if (!u) continue;
+      if (u.pop > 0) u.pop = Math.max(0, u.pop - dt * 3.2);
+      u.cdT -= dt;
+      if (u.cdT > 0) continue;
+      const def = tierOf(u.tier);
+      const ux = cxp(c), uy = cyp(c) - 20;
+      let best = null, bd = def.range;
+      for (const e of enemies) {
+        if (e.dead) continue;
+        const d = dist(ux, uy, e.x, e.y - 14);
+        if (d < bd) { bd = d; best = e; }
+      }
+      if (!best) continue;
+      u.cdT = def.cd;
+      const orb = u.tier >= 4;
+      shots.push({
+        x: ux, y: uy, target: best, dmg: def.atk, speed: orb ? 760 : 900,
+        kind: orb ? 'orb' : 'arrow', color: TIER_COLORS[u.tier - 1], r: 4 + u.tier,
+        x0: ux, y0: uy, lethal: u.tier >= 5,
+      });
+      if (u.tier >= 4) audio.sfx('arrow');
+    }
+
+    /* 投射物 */
+    for (let i = shots.length - 1; i >= 0; i--) {
+      const s = shots[i];
+      if (!s.target || s.target.dead) { shots.splice(i, 1); continue; }
+      const tx = s.target.x, ty = s.target.y - 16;
+      const dx = tx - s.x, dy = ty - s.y, d = Math.hypot(dx, dy) || 1;
+      const step = s.speed * dt;
+      s.angle = Math.atan2(dy, dx);
+      if (d <= step + 6) {
+        hurtEnemy(s.target, s.dmg);
+        if (s.lethal) fx.burst(tx, ty, 5, { color: s.color, speed: 120 });
+        shots.splice(i, 1);
+        continue;
+      }
+      s.x += (dx / d) * step; s.y += (dy / d) * step;
+    }
+
+    /* 清理 */
+    for (let i = enemies.length - 1; i >= 0; i--) if (enemies[i].dead) enemies.splice(i, 1);
+
+    /* 胜负 */
+    if (state.baseHp <= 0) {
+      rule.status = 'lost';
+      audio.sfx('lose');
+      svc.finish({ stars: 0, score: state.kills * 12 + state.merges * 10, coins: 0, kills: state.kills, time: state.time });
+      return;
+    }
+    const allSpawned = state.spawnIdx >= schedule.length;
+    if (allSpawned && enemies.length === 0) {
+      state.winT += dt;
+      if (state.winT > 0.75) {
+        rule.status = 'won';
+        const ratio = state.baseHp / state.baseHpMax;
+        const stars = ratio >= 0.85 ? 3 : ratio >= 0.5 ? 2 : 1;
+        audio.sfx('win');
+        svc.finish({
+          stars, score: state.kills * 12 + state.merges * 18 + state.bestTier * 60 + Math.round(ratio * 300),
+          coins: 18 + level.id * 6, kills: state.kills, time: state.time,
+        });
+      }
+    }
+  }
+
+  /* ------------------------------ 绘制：世界 ------------------------------ */
+  function traceRoad(ctx) {
+    ctx.beginPath(); ctx.moveTo(ROAD[0].x, ROAD[0].y);
+    for (let i = 1; i < ROAD.length; i++) ctx.lineTo(ROAD[i].x, ROAD[i].y);
+  }
+
+  function drawRoad(ctx, t) {
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    traceRoad(ctx); ctx.lineWidth = ROAD_W + 12; ctx.strokeStyle = 'rgba(0,0,0,.34)'; ctx.stroke();
+    traceRoad(ctx); ctx.lineWidth = ROAD_W; ctx.strokeStyle = 'rgba(0,0,0,.30)'; ctx.stroke();
+    traceRoad(ctx); ctx.lineWidth = ROAD_W - 30; ctx.strokeStyle = 'rgba(255,255,255,.045)'; ctx.stroke();
+    traceRoad(ctx); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,207,92,.16)'; ctx.stroke();
+    // 流动中线
+    ctx.setLineDash([14, 20]); ctx.lineDashOffset = -(t * 46) % 34;
+    traceRoad(ctx); ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,207,92,.26)'; ctx.stroke();
+    ctx.setLineDash([]);
+    // 路肩石
+    for (let s = 20; s < ROAD_LEN; s += 64) {
+      const p = pathAt(s);
+      for (const k of [-1, 1]) {
+        ctx.beginPath(); ctx.arc(p.x + p.nx * (ROAD_W / 2 - 7) * k, p.y + p.ny * (ROAD_W / 2 - 7) * k, 2.6, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,.10)'; ctx.fill();
+      }
+    }
+    // 出生口
+    const p0 = pathAt(0);
+    const pulse = 0.5 + 0.5 * Math.sin(t * 3);
+    ctx.beginPath(); ctx.arc(p0.x, p0.y, 34 + pulse * 5, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,93,93,' + (0.18 + pulse * 0.16) + ')'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawGate(ctx, t) {
+    const x = BASE.x, y = BASE.y;
+    const f = clamp(state.gateFlash, 0, 1);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.fillStyle = 'rgba(0,0,0,.42)';
+    ctx.beginPath(); ctx.ellipse(0, 6, 98, 15, 0, 0, Math.PI * 2); ctx.fill();
+    // 城墙
+    const g = ctx.createLinearGradient(0, -108, 0, 2);
+    g.addColorStop(0, C.groundDark); g.addColorStop(0.55, C.ground); g.addColorStop(1, C.groundDark);
+    roundRect(ctx, -84, -104, 168, 106, 8); ctx.fillStyle = g; ctx.fill();
+    ctx.lineWidth = 2.5; ctx.strokeStyle = f > 0.05 ? C.danger : 'rgba(255,255,255,.22)'; ctx.stroke();
+    // 城垛
+    ctx.fillStyle = C.accent;
+    for (let i = 0; i < 5; i++) roundRect(ctx, -80 + i * 34, -120, 24, 20, 4), ctx.fill();
+    // 门洞
+    ctx.beginPath();
+    ctx.moveTo(-32, 2); ctx.lineTo(-32, -44); ctx.arc(0, -44, 32, Math.PI, 0); ctx.lineTo(32, 2);
+    ctx.closePath(); ctx.fillStyle = 'rgba(0,0,0,.62)'; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,207,92,.35)'; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.lineWidth = 1;
+    for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.moveTo(-84, -78 + i * 22); ctx.lineTo(84, -78 + i * 22); ctx.stroke(); }
+    if (f > 0.05) { ctx.fillStyle = 'rgba(255,93,93,' + f * 0.28 + ')'; roundRect(ctx, -84, -120, 168, 124, 8); ctx.fill(); }
+    ctx.restore();
+    // 城门血条
+    const ratio = clamp(state.baseHp / state.baseHpMax, 0, 1);
+    ctx.save();
+    roundRect(ctx, x - 76, y + 10, 152, 10, 5); ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fill();
+    if (ratio > 0) {
+      roundRect(ctx, x - 76, y + 10, Math.max(10, 152 * ratio), 10, 5);
+      ctx.fillStyle = ratio > 0.5 ? C.ok : ratio > 0.25 ? C.accent : C.danger; ctx.fill();
+    }
+    ctx.restore();
+    if (art) art.flag(ctx, x + 66, y - 104, C.accent2, t);
+  }
+
+  function drawEnemy(ctx, e, t) {
+    const s = e.boss ? 2.25 : 1.28 + (e.r - 11) * 0.05;
+    if (art) {
+      art.char(ctx, e.x, e.y, s, {
+        kind: e.boss ? 'boss' : 'enemy', role: 'melee', tier: e.boss ? 3 : 1,
+        name: e.name, facing: -1, t: t + e.seed, moving: true, flash: e.flash > 0,
+        hp: e.hp / e.maxHp,
+      });
+    } else {
+      ctx.fillStyle = C.enemy; ctx.beginPath(); ctx.arc(e.x, e.y - 12, 9 * s, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  function drawUnit(ctx, c, u, t, px, py, alpha) {
+    const def = tierOf(u.tier);
+    const scale = (1.18 + u.tier * 0.125) * (1 + (u.pop || 0) * 0.24);
+    const role = ['melee', 'ranged', 'ranged', 'mage', 'mage', 'tank'][u.tier - 1] || 'melee';
+    ctx.save();
+    if (alpha != null) ctx.globalAlpha = alpha;
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.beginPath(); ctx.ellipse(px, py + 34, 32, 8, 0, 0, Math.PI * 2); ctx.fill();
+    if (u.tier >= 4) {
+      const aura = ctx.createRadialGradient(px, py + 6, 4, px, py + 6, 54);
+      aura.addColorStop(0, TIER_COLORS[u.tier - 1] + '55');
+      aura.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = aura; ctx.beginPath(); ctx.arc(px, py + 6, 54, 0, Math.PI * 2); ctx.fill();
+    }
+    if (art) {
+      art.char(ctx, px, py + 34, scale, {
+        kind: 'hero', role, name: def.name, tier: u.tier, facing: 1,
+        t: t + c.i * 0.7, moving: false,
+      });
+    } else {
+      ctx.fillStyle = C.hero; ctx.beginPath(); ctx.arc(px, py, 14, 0, Math.PI * 2); ctx.fill();
+    }
+    // 等级角标
+    const bx = px - 40, by = py - 40;
+    ctx.beginPath(); ctx.arc(bx, by, 13, 0, Math.PI * 2); ctx.fillStyle = TIER_COLORS[u.tier - 1]; ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.stroke();
+    text(ctx, String(u.tier), bx, by + 1, { size: 15, weight: 900, color: C.ink, align: 'center' });
+    ctx.restore();
+  }
+
+  function drawBoard(ctx, t) {
+    roundRect(ctx, BOARD.x, BOARD.y, BOARD.w, BOARD.h, 22);
+    ctx.fillStyle = C.ui; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.stroke();
+    text(ctx, '合成台 · ' + (D.board.name || '棋盘'), BOARD.x + 24, BOARD.y + 20, { size: 16, weight: 700, color: 'rgba(255,255,255,.60)' });
+    text(ctx, '最高 Lv.' + state.bestTier + '/' + MAXT, BOARD.x + BOARD.w - 24, BOARD.y + 20, { size: 16, weight: 800, color: C.gold, align: 'right' });
+
+    for (const c of cells) {
+      const u = c.unit;
+      const isSel = state.sel === c.i;
+      const isHover = state.drag && state.hover === c.i && state.hover !== state.drag.from;
+      roundRect(ctx, c.x, c.y, CELL.w, CELL.h, 16);
+      ctx.fillStyle = isSel ? 'rgba(255,207,92,.13)' : 'rgba(255,255,255,.045)';
+      ctx.fill();
+      ctx.lineWidth = isSel ? 3 : 2;
+      ctx.strokeStyle = isSel ? C.accent : isHover ? 'rgba(255,255,255,.55)' : 'rgba(255,255,255,.10)';
+      ctx.stroke();
+
+      if (!u) {
+        ctx.save(); ctx.setLineDash([6, 6]); ctx.lineWidth = 1.5;
+        roundRect(ctx, c.x + 10, c.y + 10, CELL.w - 20, CELL.h - 20, 12);
+        ctx.strokeStyle = isHover ? 'rgba(255,207,92,.5)' : 'rgba(255,255,255,.10)'; ctx.stroke();
+        ctx.setLineDash([]); ctx.strokeStyle = 'rgba(255,255,255,.13)'; ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cxp(c) - 10, cyp(c) + 2); ctx.lineTo(cxp(c) + 10, cyp(c) + 2);
+        ctx.moveTo(cxp(c), cyp(c) - 8); ctx.lineTo(cxp(c), cyp(c) + 12);
+        ctx.stroke(); ctx.restore();
+      } else if (!(state.drag && state.drag.moved && state.drag.from === c.i)) drawUnit(ctx, c, u, t, cxp(c), cyp(c));
+    }
+
+    // 拖拽中的单位跟随手指（可合成目标高亮绿框）
+    const d = state.drag;
+    if (d && d.moved && cells[d.from] && cells[d.from].unit) {
+      const ti = state.hover, src = cells[d.from];
+      if (ti >= 0 && cells[ti].unit && cells[ti].unit.tier === src.unit.tier && ti !== d.from) {
+        ctx.save(); ctx.lineWidth = 3; ctx.strokeStyle = C.ok;
+        roundRect(ctx, cells[ti].x - 3, cells[ti].y - 3, CELL.w + 6, CELL.h + 6, 18); ctx.stroke(); ctx.restore();
+      }
+      drawUnit(ctx, src, src.unit, t, d.x, d.y - 8, 0.92);
+    }
+    // 选中单位：到可合成目标的虚线提示
+    if (state.sel >= 0 && cells[state.sel] && cells[state.sel].unit) {
+      const c = cells[state.sel], k = 0.5 + 0.5 * Math.sin(t * 6);
+      ctx.save(); ctx.setLineDash([5, 6]); ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(255,207,92,' + (0.25 + k * 0.3) + ')';
+      for (const o of cells) {
+        if (o.i === c.i || !o.unit || o.unit.tier !== c.unit.tier || c.unit.tier >= MAXT) continue;
+        ctx.beginPath(); ctx.moveTo(cxp(c), cyp(c) - 16); ctx.lineTo(cxp(o), cyp(o) - 16); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  function drawWorld(ctx, t) {
+    ctx.save();
+    const sh = fx.shakeAmt || 0;
+    if (sh > 0.4) ctx.translate((view.next() - 0.5) * sh, (view.next() - 0.5) * sh);
+    if (art) art.scene(ctx, W, H, t, { groundY: GROUND_Y });
+    else { ctx.fillStyle = '#141428'; ctx.fillRect(0, 0, W, H); }
+    drawRoad(ctx, t);
+    drawGate(ctx, t);
+    for (const e of enemies) drawEnemy(ctx, e, t);
+    for (const s of shots) {
+      if (art) art.projectile(ctx, s.x, s.y, { kind: s.kind, angle: s.angle, color: s.color, r: s.r });
+      else { ctx.fillStyle = s.color; ctx.fillRect(s.x - 2, s.y - 2, 4, 4); }
+    }
+    drawBoard(ctx, t);
+    ctx.restore();
+  }
+
+  /* ------------------------------ 绘制：HUD ------------------------------ */
+  function pill(ctx, r, label, value, color) {
+    roundRect(ctx, r.x, r.y, r.w, r.h, r.h / 2);
+    ctx.fillStyle = 'rgba(8,12,22,.62)'; ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.stroke(); text(ctx, label, r.x + 16, r.y + r.h / 2, { size: 15, weight: 700, color: 'rgba(255,255,255,.55)' });
+    text(ctx, value, r.x + r.w - 16, r.y + r.h / 2 + 1, { size: 22, weight: 900, color, align: 'right' });
+  }
+
+  function drawHUD(ctx, t) {
+    const waveNow = Math.min(level.waves.length, 1 + level.waves.filter((w) => state.time >= w.at).length);
+    pill(ctx, HUD.gold, CUR, String(Math.floor(state.gold)), C.gold);
+    pill(ctx, HUD.wave, '波次', waveNow + '/' + level.waves.length, '#ffffff');
+    pill(ctx, HUD.kill, '击杀', String(state.kills), C.accent);
+
+    // 基地耐久
+    text(ctx, '基地', 16, HUD.hp.y + HUD.hp.h / 2, { size: 16, weight: 800, color: 'rgba(255,255,255,.62)' });
+    const ratio = clamp(state.baseHp / state.baseHpMax, 0, 1);
+    bar(ctx, HUD.hp.x, HUD.hp.y, HUD.hp.w, HUD.hp.h, ratio, {
+      color: ratio > 0.5 ? C.ok : ratio > 0.25 ? C.accent : C.danger, stroke: 'rgba(0,0,0,.5)',
+    });
+    text(ctx, Math.ceil(state.baseHp) + '/' + state.baseHpMax, HUD.hp.x + HUD.hp.w + 8, HUD.hp.y + HUD.hp.h / 2, {
+      size: 16, weight: 800, color: 'rgba(255,255,255,.75)',
+    });
+
+    // 召唤按钮
+    const empties = cells.filter((c) => !c.unit).length;
+    const canSummon = state.gold >= COST && empties > 0;
+    const sg = ctx.createLinearGradient(0, BTN.summon.y, 0, BTN.summon.y + BTN.summon.h);
+    if (canSummon) { sg.addColorStop(0, C.gold); sg.addColorStop(1, C.accent2); }
+    else { sg.addColorStop(0, 'rgba(96,102,126,.55)'); sg.addColorStop(1, 'rgba(62,68,92,.55)'); }
+    const B = BTN.summon;
+    ctx.save();
+    ctx.shadowColor = canSummon ? 'rgba(255,180,60,.45)' : 'transparent';
+    ctx.shadowBlur = canSummon ? 18 : 0; ctx.shadowOffsetY = 4;
+    roundRect(ctx, B.x, B.y, B.w, B.h, 20); ctx.fillStyle = sg; ctx.fill(); ctx.restore();
+    roundRect(ctx, B.x, B.y, B.w, B.h, 20);
+    ctx.lineWidth = 2; ctx.strokeStyle = canSummon ? 'rgba(255,255,255,.6)' : 'rgba(255,255,255,.16)'; ctx.stroke();
+    ctx.save(); ctx.globalAlpha = canSummon ? 0.28 : 0.12; ctx.fillStyle = '#fff';
+    roundRect(ctx, B.x + 10, B.y + 8, B.w - 20, B.h * 0.32, 12); ctx.fill(); ctx.restore();
+    text(ctx, '召唤', B.x + 30, B.y + B.h / 2 + 2, { size: 34, weight: 900, color: canSummon ? '#3a2408' : 'rgba(255,255,255,.5)' });
+    text(ctx, 'Lv.1 · ' + COST + ' ' + CUR + ' · 空格 ' + empties, B.x + B.w - 26, B.y + B.h / 2 + 2,
+      { size: 16, weight: 800, color: canSummon ? 'rgba(58,36,8,.75)' : 'rgba(255,255,255,.35)', align: 'right' });
+
+    // 出售按钮
+    const selU = state.sel >= 0 ? cells[state.sel].unit : null;
+    const sellOn = !!selU;
+    roundRect(ctx, BTN.sell.x, BTN.sell.y, BTN.sell.w, BTN.sell.h, 20);
+    ctx.fillStyle = sellOn ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.06)'; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = sellOn ? C.accent : 'rgba(255,255,255,.14)'; ctx.stroke();
+    text(ctx, '出售', BTN.sell.x + BTN.sell.w / 2, BTN.sell.y + 34, { size: 26, weight: 900, color: sellOn ? '#fff' : 'rgba(255,255,255,.4)', align: 'center' });
+    text(ctx, sellOn ? 'Lv.' + selU.tier + ' · +' + sellValue(selU.tier) : '先选中单位', BTN.sell.x + BTN.sell.w / 2, BTN.sell.y + 66,
+      { size: 16, weight: 700, color: sellOn ? C.gold : 'rgba(255,255,255,.3)', align: 'center' });
+
+    // 底部提示
+    text(ctx, '点两个同级合成 · 拖动换位 · 空格点召唤', W / 2, 1204, { size: 17, weight: 600, color: 'rgba(255,255,255,.40)', align: 'center' });
+    if (state.sel >= 0 && cells[state.sel].unit) {
+      const t2 = cells[state.sel].unit.tier;
+      const nxt = t2 >= MAXT ? '已满级' : '再点一个 Lv.' + t2 + ' 合体 → Lv.' + (t2 + 1);
+      text(ctx, nxt, W / 2, 1236, { size: 17, weight: 800, color: C.accent, align: 'center' });
+    }
+  }
+
+  /* ------------------------------ 输入 ------------------------------ */
+  function cellAt(x, y) {
+    for (const c of cells) if (inRect(x, y, c)) return c.i;
+    return -1;
+  }
+
+  function pointer(kind, x, y, key) {
+    if (rule.status !== 'playing') return;
+    if (kind === 'key') {
+      if (key === ' ' || key === 'Enter') summon();
+      if (key === 's' || key === 'S') sellSelected();
+      return;
+    }
+    if (kind === 'down') {
+      if (inRect(x, y, BTN.summon)) { summon(); return; }
+      if (inRect(x, y, BTN.sell)) { sellSelected(); return; }
+      const ci = cellAt(x, y);
+      if (ci < 0) {
+        if (state.sel >= 0) { state.sel = -1; audio.sfx('click'); }
+        state.drag = null;
+        return;
+      }
+      if (cells[ci].unit) {
+        state.drag = { from: ci, sx: x, sy: y, x, y, moved: false };
+      } else if (state.sel >= 0) {
+        resolve(state.sel, ci); // 点空位 = 移过去
+      }
+      return;
+    }
+    if (kind === 'move') {
+      const d = state.drag;
+      if (!d) return;
+      d.x = x; d.y = y;
+      if (!d.moved && dist(x, y, d.sx, d.sy) > 12) d.moved = true;
+      state.hover = cellAt(x, y);
+      return;
+    }
+    if (kind !== 'up') return;
+    const d = state.drag;
+    if (!d) return;
+    state.drag = null; state.hover = -1;
+    const ti = cellAt(x, y);
+    if (d.moved && ti >= 0 && ti !== d.from) { resolve(d.from, ti); return; }
+    // 轻触
+    if (state.sel === d.from) { state.sel = -1; audio.sfx('click'); return; }
+    if (state.sel < 0) {
+      state.sel = d.from;
+      audio.sfx('pickup');
+      fx.ring(cxp(cells[d.from]), cyp(cells[d.from]) - 16, C.accent, 18, { grow: 90, max: 0.26 });
+      return;
+    }
+    resolve(state.sel, d.from);
+  }
+
+  /* ------------------------------ 机器人（无头仿真） ------------------------------ */
+  let botT = 0;
+  function bot(dt) {
+    if (rule.status !== 'playing') return;
+    botT += dt;
+    if (botT < 0.15) return;
+    botT = 0;
+    // 1) 能合就合（合并总是正收益，且腾出格子）
+    const byTier = {};
+    for (const c of cells) if (c.unit) (byTier[c.unit.tier] = byTier[c.unit.tier] || []).push(c.i);
+    for (let t = 1; t < MAXT; t++) {
+      const g = byTier[t];
+      if (g && g.length >= 2) { resolve(g[0], g[1]); return; }
+    }
+    // 2) 有空格就召唤
+    const empties = cells.filter((c) => !c.unit).length;
+    if (empties > 0) {
+      if (state.gold >= COST) summon();
+      return;
+    }
+    // 3) 满盘兜底：卖最低级
+    const low = cells.filter((c) => c.unit).sort((a, b) => a.unit.tier - b.unit.tier)[0];
+    if (low) { state.sel = low.i; sellSelected(); }
+  }
+
+  /* ------------------------------ 规则对象 ------------------------------ */
+  const rule = {
+    status: 'playing',
+    ui: { summon: BTN.summon, sell: BTN.sell, cells: [] },
+    init() {
+      cells.length = 0;
+      for (let r = 0; r < D.board.rows; r++) {
+        for (let col = 0; col < D.board.cols; col++) {
+          cells.push({
+            i: r * D.board.cols + col, row: r, col,
+            x: CELL.x0 + col * (CELL.w + CELL.gx), y: CELL.y0 + r * (CELL.h + CELL.gy),
+            w: CELL.w, h: CELL.h, unit: null,
+          });
+        }
+      }
+      rule.ui = { summon: BTN.summon, sell: BTN.sell, cells: cells.map((c) => ({ i: c.i, x: c.x, y: c.y, w: c.w, h: c.h })) };
+      state.sel = -1; state.drag = null; state.hover = -1;
+    },
+    update, drawWorld, drawHUD, pointer, bot,
+    result() {
+      return { stars: 0, score: state.kills * 12 + state.merges * 18, coins: 0, kills: state.kills, time: state.time };
+    },
+    debug() {
+      let dps = 0;
+      for (const c of cells) if (c.unit) dps += tierOf(c.unit.tier).atk / tierOf(c.unit.tier).cd;
+      return {
+        gold: Math.round(state.gold), baseHp: Math.ceil(state.baseHp), enemies: enemies.length,
+        units: cells.filter((c) => c.unit).length, kills: state.kills, leaked: state.leaked,
+        time: +state.time.toFixed(1), spawned: state.spawnIdx, schedule: schedule.length,
+        merges: state.merges, summons: state.summons, bestTier: state.bestTier,
+        dps: Math.round(dps), sel: state.sel, cells: cells.map((c) => (c.unit ? c.unit.tier : 0)),
+        status: rule.status,
+      };
+    },
+  };
+  return rule;
+}
+
+return { createRule };
+})();
+__m["js/main.js"] = (function(){
+/* 入口：创建 App，绑定启动遮罩；window.__game 供调试与自动化测试使用 */
+const { App } = __m["js/app.js"];
+
+const { CONTENT } = __m["js/content.js"];
+
+const { createRule } = __m["js/rules/merge.js"];
+
+
+const canvas = document.getElementById('game');
+const app = new App(canvas, CONTENT, createRule);
+app.mount();
+window.__game = app;
+
+const boot = document.getElementById('boot');
+function hideBoot() {
+  if (boot && boot.parentNode) {
+    boot.classList.add('hide');
+    setTimeout(() => { try { boot.remove(); } catch (e) {} }, 420);
+  }
+  app.begin();
+}
+if (boot) boot.addEventListener('pointerdown', hideBoot, { once: true });
+window.addEventListener('pointerdown', () => app.begin(), { once: true });
+
+return {  };
+})();
+})();
+
+</script>
+</body>
+</html>

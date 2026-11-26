@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "游戏工坊",
+    "description": "一句话生成完整可玩的 HTML5 游戏（工程 + 单文件离线版 + 自检）。对话里说\"做一个…塔防/打捞/合成\"即可触发 game_forge；game_plan 预览选型，game_build / game_check 用于迭代与验收。程序化占位美术与合成音频，不生成安装包；浏览器自检需本机 Chrome。",
+    "detail": "docs/PREVIEW.md"
+  }
+}

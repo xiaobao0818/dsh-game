@@ -1,0 +1,25 @@
+{
+  "generator": "dsh-game-studio",
+  "version": 1,
+  "slug": "sort-dev",
+  "title": "老小区归位",
+  "subtitle": "都市夜景 · 保安的冒险",
+  "tagline": "把队列里的物件送进有限环道，凑满同色整排清空；顺序就是策略。",
+  "genre": "sort",
+  "theme": "city",
+  "themeName": "都市夜景",
+  "orientation": "portrait",
+  "levels": 25,
+  "seed": 450703099,
+  "brief": "都市小区停车排序解谜，25关，竖屏",
+  "plan": {
+    "theme": "city",
+    "themeReason": "city(6)",
+    "genre": "sort",
+    "genreReason": "排序,停车",
+    "title": "老小区归位",
+    "levels": 25,
+    "orientation": "portrait"
+  },
+  "createdAt": "2026-11-26T22:18:44.878Z"
+}
