@@ -105,9 +105,11 @@ locale/ icon.svg        插件展示元数据
 
 ## 文档
 
+- [交付说明（v1.1.0 双运行时）](docs/DELIVERY.md)
 - [游戏开发方法论（从 14 个项目提炼）](docs/PLAYBOOK.md)
 - [作业手册（随包 skill）](skills/game-studio/SKILL.md)
 - [演示游戏索引](examples/README.md)
+- [更新日志](CHANGELOG.md)
 
 ## 已知边界
 
