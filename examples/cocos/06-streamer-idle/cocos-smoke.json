@@ -1,0 +1,133 @@
+{
+  "ok": true,
+  "project": "/Volumes/张小宝/202611/.studio-dev/cocos-games/06-streamer-idle",
+  "build": "/Volumes/张小宝/202611/.studio-dev/cocos-games/06-streamer-idle/build/web-mobile",
+  "shots": {
+    "cocos-title": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/06-streamer-idle/shots/cocos-title.png",
+      "bytes": 28164
+    },
+    "cocos-play": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/06-streamer-idle/shots/cocos-play.png",
+      "bytes": 59573
+    },
+    "cocos-result": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/06-streamer-idle/shots/cocos-result.png",
+      "bytes": 20688
+    }
+  },
+  "errors": [],
+  "warnings": [
+    "FPS 偏低（无头软件渲染）：19"
+  ],
+  "checks": [
+    {
+      "name": "boot",
+      "ok": true,
+      "info": {
+        "ready": true
+      }
+    },
+    {
+      "name": "play",
+      "ok": true,
+      "info": {
+        "scene": "play",
+        "level": 3,
+        "fps": 19,
+        "rule": {
+          "status": "playing",
+          "phase": "plan",
+          "day": 1,
+          "ap": 2,
+          "coins": 110,
+          "rev": 0,
+          "fans": 0,
+          "target": 2777,
+          "fanTarget": 118,
+          "staff": 0,
+          "venue": 1,
+          "inc": 2.22,
+          "time": 4.3,
+          "kills": 0,
+          "win": false,
+          "stars": 0,
+          "reason": "",
+          "finalRatio": 0,
+          "spend": 0,
+          "hires": 0,
+          "upgs": 0,
+          "showUses": 0
+        }
+      }
+    },
+    {
+      "name": "result",
+      "ok": true,
+      "info": {
+        "scene": "result",
+        "result": {
+          "win": true,
+          "stars": 3
+        },
+        "fps": 28
+      }
+    },
+    {
+      "name": "console",
+      "ok": true,
+      "info": {
+        "errors": 0
+      }
+    }
+  ],
+  "boot": {
+    "scene": "title",
+    "fps": 30,
+    "W": 720,
+    "H": 1280,
+    "gs": {
+      "W": 720,
+      "H": 1280
+    }
+  },
+  "play": {
+    "scene": "play",
+    "level": 3,
+    "fps": 19,
+    "rule": {
+      "status": "playing",
+      "phase": "plan",
+      "day": 1,
+      "ap": 2,
+      "coins": 110,
+      "rev": 0,
+      "fans": 0,
+      "target": 2777,
+      "fanTarget": 118,
+      "staff": 0,
+      "venue": 1,
+      "inc": 2.22,
+      "time": 4.3,
+      "kills": 0,
+      "win": false,
+      "stars": 0,
+      "reason": "",
+      "finalRatio": 0,
+      "spend": 0,
+      "hires": 0,
+      "upgs": 0,
+      "showUses": 0
+    }
+  },
+  "fastForward": "won",
+  "result": {
+    "scene": "result",
+    "result": {
+      "win": true,
+      "stars": 3
+    },
+    "fps": 28
+  },
+  "durationMs": 14102
+}

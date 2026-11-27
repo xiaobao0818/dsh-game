@@ -19,7 +19,8 @@
     "genreReason": "放置,经营,模拟,主播",
     "title": "三十天开播",
     "levels": 24,
-    "orientation": "portrait"
+    "orientation": "portrait",
+    "engine": "html"
   },
-  "createdAt": "2026-11-26T22:18:45.050Z"
+  "createdAt": "2026-11-27T10:58:50.661Z"
 }

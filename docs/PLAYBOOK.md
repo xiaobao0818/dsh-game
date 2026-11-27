@@ -200,3 +200,57 @@
 | 三十天开播 | 放置经营 | 都市夜景 | 24/24 | 0/24 | 129.8 KB | 60fps |
 
 每条数据都来自对应工程根目录的 `check-report.json`，可用 `node tools/check.mjs` 复跑。
+
+
+---
+
+## 11. 双运行时：HTML5 与 Cocos Creator 3.8
+
+工作区里的《僵尸围山门》给了一个明确结论：**玩法逻辑与渲染分家后，换引擎只换表现层**（`sim.ts` 1473 行与
+`sim.js` 逐行一致，8 个数据文件 diff 0~1 行）。插件据此做成双运行时：
+
+```
+同一份 content（关卡/数值/主题） + 同一份 rules（update/pointer/bot）
+        ├── HTML5 目标：Canvas2D 立即模式渲染 + WebAudio + DOM 输入 → 单文件离线版
+        └── Cocos 目标：GameRoot(宿主) + CanvasSurface(Canvas2D→Graphics/Label 桥) + Cocos 输入/循环
+```
+
+### 11.1 为什么用「绘制桥」而不是重写一套 Cocos 玩法
+
+- 6 个基因共 ~3500 行规则/表现代码，重写两套必然漂移（工作区吃过「补丁只改一侧」的亏）。
+- 规则层的绘制只用到 Canvas2D 的一个**小子集**：路径（arc/ellipse/quadratic/bezier/arcTo）、
+  fill/stroke、fillRect、fillText/strokeText/measureText、线性/径向渐变、save/restore/translate/scale/rotate、
+  globalAlpha、lineWidth/cap/join、clip、drawImage（仅离屏缓存）。
+- `CanvasSurface` 把这套子集映射到 Cocos `Graphics`（一个节点按序重放路径，`fill/stroke` 通过 pathOffset 分段消费）
+  + `Label` 池（文字）+ 变换矩阵（把设计坐标 左上原点/y 向下 映射到节点中心/y 向上）。
+- 结果：**同一份规则代码**在 HTML 与 Cocos 里跑；Cocos 工程里 `assets/scripts/game/` 与 HTML 工程的 `js/` 同源。
+
+### 11.2 Cocos 工程的生成与验收
+
+- 工程骨架：`package.json`(creator 3.8.8) + `settings/v2`（设计分辨率按横竖屏 1280×720 / 720×1280）+ `assets/scenes/Main.scene`
+  （Canvas + Camera + GameRoot 组件，脚本 uuid 用 Cocos 的压缩 uuid 规则写入场景）+ `tsconfig.json`。
+- 构建：Cocos CLI `--project <dir> --build "platform=web-mobile;debug=true" --nologin`；
+  工作区实测首次 ~40~50s（构建引擎缓存），之后 5~12s；CLI 偶发非 0 退出但产物已生成，按产物判定并重试。
+- 冒烟：无头 Chrome 必须带 WebGL 软件渲染参数（`--enable-unsafe-swiftshader --use-angle=swiftshader --ignore-gpu-blocklist --enable-webgl`），
+  通过 CDP 打开 `build/web-mobile/index.html`，断言 `window.__game` 就绪 → 进关 → 机器人快进 → 结算 → 三张截图。
+- 性能：无头软件渲染 ~20~26fps；**有头/真机 60fps**（同一构建用有头 Chrome 实测 59.98）。不要把无头软件渲染数字当性能结论。
+
+### 11.3 Cocos 桥的已知近似（写进生成工程 README）
+
+| 能力 | 处理 |
+|---|---|
+| 线性渐变 | fillRect 按 14 条带模拟；路径填充按包围盒取色（按钮/面板会略平） |
+| 径向渐变 | 光晕/暗角直接省略（避免色带）；粒子/光球取中心色 |
+| 阴影 / lineDash | 忽略（虚线变实线） |
+| drawImage（离屏缓存） | 不可用；规则的背景缓存需检测 `ctx.drawImage` 回退为直接绘制 |
+| clip | 只支持轴对齐矩形/路径包围盒（排序的卡片溢出裁切够用） |
+| 文字 | Label 池；描边用 LabelOutline；始终位于 Graphics 之上 |
+
+### 11.4 踩坑（本轮实测）
+
+1. `LineCap/LineJoin` 不是 `cc` 顶层导出，要用 `Graphics.LineCap / Graphics.LineJoin`。
+2. 渐变对象必须自己带 `addColorStop`（Cocos 无 CanvasGradient）。
+3. 离屏 canvas + `drawImage` 在 Cocos 无对应物：`ensureBg()` 必须检测 `typeof ctx.drawImage !== 'function'` 回退。
+4. 场景里脚本组件 `__type__` 是 **uuid 压缩串**；自定义 uuid 需按 Cocos 算法压缩，否则场景加载不出组件。
+5. 无头冒烟若无 WebGL 标志 → 黑屏/报错；Cocos 构建产物必须用 HTTP 服务（`file://` 会被 CORS/相对路径坑）。
+6. 设计分辨率要在 `settings/v2/packages/project.json` 与场景 Canvas 的 UITransform 同时改，只改一处会错位。

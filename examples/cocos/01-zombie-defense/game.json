@@ -1,0 +1,31 @@
+{
+  "generator": "dsh-game-studio",
+  "engine": "cocos",
+  "creator": "3.8.8",
+  "version": 1,
+  "slug": "horde-i3z5x2",
+  "title": "僵尸围山门",
+  "subtitle": "中式僵尸 · 法师的冒险",
+  "tagline": "造屋自动派兵，与来敌在一条战线上对冲；资源滚雪球，法术救场。",
+  "genre": "horde",
+  "theme": "jiangshi",
+  "orientation": "landscape",
+  "levels": 30,
+  "seed": 1095070646,
+  "brief": "做一个僵尸围山门的塔防，30关，手机横屏",
+  "plan": {
+    "theme": "jiangshi",
+    "themeReason": "jiangshi(5)",
+    "genre": "horde",
+    "genreReason": "塔防",
+    "title": "僵尸围山门",
+    "levels": 30,
+    "orientation": "landscape",
+    "engine": "cocos"
+  },
+  "designResolution": {
+    "width": 1280,
+    "height": 720
+  },
+  "createdAt": "2026-11-27T10:51:40.753Z"
+}

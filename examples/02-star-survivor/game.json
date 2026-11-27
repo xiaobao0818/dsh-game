@@ -19,7 +19,8 @@
     "genreReason": "割草,生存",
     "title": "星海幸存者",
     "levels": 24,
-    "orientation": "landscape"
+    "orientation": "landscape",
+    "engine": "html"
   },
-  "createdAt": "2026-11-26T22:18:42.645Z"
+  "createdAt": "2026-11-27T10:58:10.140Z"
 }

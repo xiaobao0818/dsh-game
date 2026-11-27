@@ -1,0 +1,13 @@
+{
+  "name": "hook",
+  "creator": {
+    "version": "3.8.8"
+  },
+  "uuid": "ab680ed5-c408-43b9-bcc6-1e1f1d26cd1d",
+  "version": "1.0.0",
+  "description": "深海打捞 · Cocos Creator 3.8 版（游戏工坊生成）",
+  "scripts": {
+    "build:web": "bash tools/build-web.sh",
+    "smoke": "node tools/cocos-smoke.mjs --project ."
+  }
+}

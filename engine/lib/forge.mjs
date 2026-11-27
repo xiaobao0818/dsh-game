@@ -1,5 +1,5 @@
 /* =========================================================================
- * forge.mjs ——「一句话 → 完整游戏」编排器
+ * forge.mjs ——「一句话 → 完整游戏」编排器（HTML5 Canvas 或 Cocos Creator 3.8）
  * plan(brief) → buildContent(theme) → 写工程 → 构建 → 自检 → 回执
  * ========================================================================= */
 import fs from 'node:fs';
@@ -8,10 +8,18 @@ import { spawn } from 'node:child_process';
 import { parseBrief, explainPlan } from './brief.mjs';
 import { loadGenreBuilders, GENRE_META } from './genres.mjs';
 import { writeProject, renderHtml, renderCss } from './build.mjs';
+import { writeCocosProject } from './cocos-build.mjs';
+import { checkCocos, buildCocos } from './cocos-check.mjs';
+
+export const ENGINES = ['html', 'cocos'];
 
 export function planGame(brief, opts = {}) {
   const plan = parseBrief(brief, opts);
   plan.reason = explainPlan(plan);
+  // 引擎选择：显式参数 > 描述里的 cocos 关键词 > 默认 html
+  const mentioned = /cocos|Cocos|COCOS|creator\s*3/i.test(String(brief || ''));
+  plan.engine = ENGINES.includes(opts.engine) ? opts.engine : (mentioned ? 'cocos' : 'html');
+  plan.reason.engine = plan.engine;
   return plan;
 }
 
@@ -26,7 +34,7 @@ function run(cwd, script, args = [], timeout = 240000) {
   });
 }
 
-export async function forge({ brief, dir, genre, theme, levels, title, seed, check = true, overwrite = false, browser = true }) {
+export async function forge({ brief, dir, genre, theme, levels, title, seed, engine, check = true, overwrite = false, browser = true }) {
   if (!brief || !String(brief).trim()) throw new Error('缺少 brief（一句话玩法描述）');
   if (!dir) throw new Error('缺少 dir（生成目录，建议绝对路径）');
   const target = path.resolve(dir);
@@ -35,7 +43,7 @@ export async function forge({ brief, dir, genre, theme, levels, title, seed, che
   }
   fs.mkdirSync(target, { recursive: true });
 
-  const plan = planGame(brief, { genre, theme, levels, title, seed });
+  const plan = planGame(brief, { genre, theme, levels, title, seed, engine });
   const builders = await loadGenreBuilders();
   const builder = builders[plan.genre];
   if (!builder || typeof builder.buildContent !== 'function') {
@@ -54,26 +62,37 @@ export async function forge({ brief, dir, genre, theme, levels, title, seed, che
   content.title = content.title || plan.title;
   content.theme = content.theme || plan.theme;
 
-  const written = writeProject({ dir: target, content, plan, ruleId: plan.genre });
-  const files = [];
-  const walk = (d) => {
-    for (const f of fs.readdirSync(d)) {
-      if (f === 'node_modules' || f === 'dist' || f === 'shots') continue;
-      const abs = path.join(d, f);
-      if (fs.statSync(abs).isDirectory()) walk(abs);
-      else files.push(path.relative(target, abs));
-    }
-  };
-  walk(target);
-
   const result = {
-    ok: true, dir: target, title: content.title, genre: plan.genre, genreName: plan.meta.name,
+    ok: true, engine: plan.engine, dir: target, title: content.title, genre: plan.genre, genreName: plan.meta.name,
     theme: plan.theme.id, themeName: plan.theme.name, levels: content.levels.length,
-    orientation: content.orientation, seed: plan.seed, files: files.length,
-    plan: plan.reason, checks: null, warnings: [], error: null,
+    orientation: content.orientation, seed: plan.seed, plan: plan.reason, checks: null, warnings: [], error: null,
   };
 
-  // 构建单文件
+  if (plan.engine === 'cocos') {
+    const built = writeCocosProject({ dir: target, content, plan, ruleId: plan.genre });
+    result.engine = 'cocos';
+    result.creator = '3.8.8';
+    result.designResolution = { width: built.W, height: built.H };
+    result.webBuild = 'build/web-mobile/index.html';
+    result.files = countFiles(target);
+    if (check) {
+      const report = await checkCocos(target, { build: true, browser, level: Math.min(3, content.levels.length) });
+      result.checks = report;
+      if (!report.ok) { result.ok = false; result.warnings.push('Cocos 自检未全绿，详见 check-report.json / cocos-smoke.json'); }
+      else fs.writeFileSync(path.join(target, 'cocos-check.json'), JSON.stringify(report, null, 2));
+    } else {
+      // 至少把工程构建一次，保证交付物可运行
+      const build = await buildCocos(target);
+      result.build = build;
+      if (!build.ok) { result.ok = false; result.error = 'Cocos 构建失败：' + build.log; }
+    }
+    return result;
+  }
+
+  const written = writeProject({ dir: target, content, plan, ruleId: plan.genre });
+  result.files = countFiles(target);
+  result.singleFile = null;
+
   const build = await run(target, 'tools/build-single.mjs');
   if (build.code !== 0) {
     result.ok = false;
@@ -83,7 +102,6 @@ export async function forge({ brief, dir, genre, theme, levels, title, seed, che
   result.singleFile = (build.out.match(/dist\/(.+\.html)/) || [])[1] || null;
   result.singleFileKB = parseFloat((build.out.match(/（([\d.]+) KB/) || [])[1] || '0');
 
-  // 自检（数据 + 仿真 + 单文件 + 浏览器）
   if (check) {
     const reportPath = path.join(target, 'check-report.json');
     const args = ['--json', reportPath];
@@ -95,21 +113,49 @@ export async function forge({ brief, dir, genre, theme, levels, title, seed, che
   return result;
 }
 
+function countFiles(root) {
+  let n = 0;
+  const walk = (d) => {
+    for (const f of fs.readdirSync(d)) {
+      if (['node_modules', 'library', 'temp', 'build', 'local', 'profiles', 'dist', 'shots'].includes(f)) continue;
+      const abs = path.join(d, f);
+      if (fs.statSync(abs).isDirectory()) walk(abs);
+      else n++;
+    }
+  };
+  walk(root);
+  return n;
+}
+
+function projectEngine(dir) {
+  try { const g = JSON.parse(fs.readFileSync(path.join(dir, 'game.json'), 'utf8')); return g.engine || 'html'; } catch (e) { return 'html'; }
+}
+
 export async function rebuild(dir) {
   const target = path.resolve(dir);
+  if (projectEngine(target) === 'cocos') {
+    const b = await buildCocos(target);
+    return { ok: b.ok, engine: 'cocos', out: (b.ok ? 'Cocos 构建成功：build/web-mobile/index.html（' + Math.round(b.ms / 1000) + 's）' : b.log) };
+  }
   const build = await run(target, 'tools/build-single.mjs');
-  return { ok: build.code === 0, out: (build.out + build.err).trim().slice(-1200) };
+  return { ok: build.code === 0, engine: 'html', out: (build.out + build.err).trim().slice(-1200) };
 }
 
 export async function checkProject(dir, { browser = true } = {}) {
   const target = path.resolve(dir);
+  const engine = projectEngine(target);
+  if (engine === 'cocos') {
+    const report = await checkCocos(target, { build: true, browser });
+    fs.writeFileSync(path.join(target, 'cocos-check.json'), JSON.stringify(report, null, 2));
+    return { ok: report.ok, engine, report };
+  }
   const reportPath = path.join(target, 'check-report.json');
   const args = ['--json', reportPath];
   if (!browser) args.push('--no-browser');
   const chk = await run(target, 'tools/check.mjs', args, 600000);
   let report = null;
   try { report = JSON.parse(fs.readFileSync(reportPath, 'utf8')); } catch (e) { /* ignore */ }
-  return { ok: chk.code === 0 && report && report.ok, report, raw: (chk.out + chk.err).trim().slice(-1500) };
+  return { ok: chk.code === 0 && report && report.ok, engine, report, raw: (chk.out + chk.err).trim().slice(-1500) };
 }
 
 export function listGenres() {
@@ -119,7 +165,7 @@ export function listGenres() {
   }));
 }
 
-/* 供 CLI 与插件共享的 HTML/CSS 预览（未落盘时用于快速检查） */
+/** 未落盘时的 HTML/CSS 预览（快速检查） */
 export function previewHtml(content) {
   return { html: renderHtml(content.theme, content.title, content.subtitle), css: renderCss(content.theme) };
 }

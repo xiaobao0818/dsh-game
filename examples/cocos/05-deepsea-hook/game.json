@@ -1,0 +1,31 @@
+{
+  "generator": "dsh-game-studio",
+  "engine": "cocos",
+  "creator": "3.8.8",
+  "version": 1,
+  "slug": "hook",
+  "title": "深海打捞",
+  "subtitle": "海底打捞 · 深海机师的冒险",
+  "tagline": "摆钩抓宝，越重越慢；限时达标，升级钩爪。",
+  "genre": "hook",
+  "theme": "ocean",
+  "orientation": "portrait",
+  "levels": 24,
+  "seed": 2630291758,
+  "brief": "海底钩爪打捞寻宝，24关，竖屏",
+  "plan": {
+    "theme": "ocean",
+    "themeReason": "ocean(4)",
+    "genre": "hook",
+    "genreReason": "钩爪,打捞,寻宝,海底",
+    "title": "深海打捞",
+    "levels": 24,
+    "orientation": "portrait",
+    "engine": "cocos"
+  },
+  "designResolution": {
+    "width": 720,
+    "height": 1280
+  },
+  "createdAt": "2026-11-27T10:54:41.832Z"
+}

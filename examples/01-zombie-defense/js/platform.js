@@ -13,6 +13,18 @@ export class Layout {
     this.resize();
   }
   resize() {
+    // 固定视口模式（Cocos 宿主）：设计分辨率由引擎缩放，这里不再做 DOM 适配
+    if (this.canvas && this.canvas.__gsFixed) {
+      this.scale = 1; this.ox = 0; this.oy = 0; this.dpr = 1;
+      this.canvas.width = this.W; this.canvas.height = this.H;
+      if (this.canvas.style) {
+        this.canvas.style.width = this.W + 'px';
+        this.canvas.style.height = this.H + 'px';
+        this.canvas.style.marginLeft = '0px';
+        this.canvas.style.marginTop = '0px';
+      }
+      return;
+    }
     // 限制总像素（约 240 万），保证竖屏高分设备也能 60fps
     const baseDpr = Math.min(2, window.devicePixelRatio || 1);
     const dpr = Math.max(1, Math.min(baseDpr, Math.sqrt(2400000 / (this.W * this.H))));
@@ -267,6 +279,7 @@ export class Input {
       this.active.delete(e.pointerId ?? 0);
       e.preventDefault();
     };
+    if (canvas.__gsFixed) return; // Cocos 等固定视口宿主自行转发输入
     canvas.addEventListener('pointerdown', down, { passive: false });
     canvas.addEventListener('pointermove', move, { passive: false });
     canvas.addEventListener('pointerup', up, { passive: false });

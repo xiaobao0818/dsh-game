@@ -1,0 +1,13 @@
+{
+  "name": "survivor-dev",
+  "creator": {
+    "version": "3.8.8"
+  },
+  "uuid": "aea3ae4e-8c11-442e-b4c8-334a276c87ea",
+  "version": "1.0.0",
+  "description": "星海幸存者 · Cocos Creator 3.8 版（游戏工坊生成）",
+  "scripts": {
+    "build:web": "bash tools/build-web.sh",
+    "smoke": "node tools/cocos-smoke.mjs --project ."
+  }
+}

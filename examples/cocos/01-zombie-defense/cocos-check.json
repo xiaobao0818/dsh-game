@@ -1,0 +1,137 @@
+{
+  "ok": true,
+  "engine": "cocos",
+  "checks": [
+    {
+      "name": "structure",
+      "ok": true,
+      "info": {
+        "creator": "3.8.8",
+        "engine": "cocos",
+        "levels": 30
+      }
+    },
+    {
+      "name": "build",
+      "ok": true,
+      "info": {
+        "ms": 12359,
+        "out": "build/web-mobile/index.html"
+      }
+    },
+    {
+      "name": "browser",
+      "ok": true,
+      "info": {
+        "boot": {
+          "scene": "title",
+          "fps": 23,
+          "W": 1280,
+          "H": 720,
+          "gs": {
+            "W": 1280,
+            "H": 720
+          }
+        },
+        "play": {
+          "scene": "play",
+          "level": 3,
+          "fps": 26,
+          "rule": {
+            "gold": 150,
+            "baseHp": 120,
+            "enemies": 0,
+            "units": 0,
+            "kills": 0,
+            "time": 4.8333333333333215,
+            "spawned": 0,
+            "schedule": 16,
+            "status": "playing"
+          }
+        },
+        "result": {
+          "scene": "result",
+          "result": {
+            "win": true,
+            "stars": 3
+          },
+          "fps": 27
+        },
+        "shots": {
+          "cocos-title": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/01-zombie-defense/shots/cocos-title.png",
+            "bytes": 68932
+          },
+          "cocos-play": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/01-zombie-defense/shots/cocos-play.png",
+            "bytes": 45145
+          },
+          "cocos-result": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/01-zombie-defense/shots/cocos-result.png",
+            "bytes": 39005
+          }
+        },
+        "durationMs": 14232
+      }
+    }
+  ],
+  "failures": [],
+  "warnings": [],
+  "stats": {
+    "build": {
+      "ok": true,
+      "ms": 12359
+    },
+    "browser": {
+      "boot": {
+        "scene": "title",
+        "fps": 23,
+        "W": 1280,
+        "H": 720,
+        "gs": {
+          "W": 1280,
+          "H": 720
+        }
+      },
+      "play": {
+        "scene": "play",
+        "level": 3,
+        "fps": 26,
+        "rule": {
+          "gold": 150,
+          "baseHp": 120,
+          "enemies": 0,
+          "units": 0,
+          "kills": 0,
+          "time": 4.8333333333333215,
+          "spawned": 0,
+          "schedule": 16,
+          "status": "playing"
+        }
+      },
+      "result": {
+        "scene": "result",
+        "result": {
+          "win": true,
+          "stars": 3
+        },
+        "fps": 27
+      },
+      "shots": {
+        "cocos-title": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/01-zombie-defense/shots/cocos-title.png",
+          "bytes": 68932
+        },
+        "cocos-play": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/01-zombie-defense/shots/cocos-play.png",
+          "bytes": 45145
+        },
+        "cocos-result": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/01-zombie-defense/shots/cocos-result.png",
+          "bytes": 39005
+        }
+      },
+      "durationMs": 14232
+    }
+  }
+}

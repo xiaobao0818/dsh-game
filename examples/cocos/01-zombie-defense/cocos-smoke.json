@@ -1,0 +1,106 @@
+{
+  "ok": true,
+  "project": "/Volumes/张小宝/202611/.studio-dev/cocos-games/01-zombie-defense",
+  "build": "/Volumes/张小宝/202611/.studio-dev/cocos-games/01-zombie-defense/build/web-mobile",
+  "shots": {
+    "cocos-title": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/01-zombie-defense/shots/cocos-title.png",
+      "bytes": 68932
+    },
+    "cocos-play": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/01-zombie-defense/shots/cocos-play.png",
+      "bytes": 45145
+    },
+    "cocos-result": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/01-zombie-defense/shots/cocos-result.png",
+      "bytes": 39005
+    }
+  },
+  "errors": [],
+  "warnings": [],
+  "checks": [
+    {
+      "name": "boot",
+      "ok": true,
+      "info": {
+        "ready": true
+      }
+    },
+    {
+      "name": "play",
+      "ok": true,
+      "info": {
+        "scene": "play",
+        "level": 3,
+        "fps": 26,
+        "rule": {
+          "gold": 150,
+          "baseHp": 120,
+          "enemies": 0,
+          "units": 0,
+          "kills": 0,
+          "time": 4.8333333333333215,
+          "spawned": 0,
+          "schedule": 16,
+          "status": "playing"
+        }
+      }
+    },
+    {
+      "name": "result",
+      "ok": true,
+      "info": {
+        "scene": "result",
+        "result": {
+          "win": true,
+          "stars": 3
+        },
+        "fps": 27
+      }
+    },
+    {
+      "name": "console",
+      "ok": true,
+      "info": {
+        "errors": 0
+      }
+    }
+  ],
+  "boot": {
+    "scene": "title",
+    "fps": 23,
+    "W": 1280,
+    "H": 720,
+    "gs": {
+      "W": 1280,
+      "H": 720
+    }
+  },
+  "play": {
+    "scene": "play",
+    "level": 3,
+    "fps": 26,
+    "rule": {
+      "gold": 150,
+      "baseHp": 120,
+      "enemies": 0,
+      "units": 0,
+      "kills": 0,
+      "time": 4.8333333333333215,
+      "spawned": 0,
+      "schedule": 16,
+      "status": "playing"
+    }
+  },
+  "softwareRenderNote": "无头 Chrome 使用软件渲染；真机/有 GPU 环境通常 60fps",
+  "fastForward": "won",
+  "result": {
+    "scene": "result",
+    "result": {
+      "win": true,
+      "stars": 3
+    },
+    "fps": 27
+  },
+  "durationMs": 14232
+}

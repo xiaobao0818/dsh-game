@@ -1,0 +1,128 @@
+{
+  "ok": true,
+  "project": "/Volumes/张小宝/202611/.studio-dev/cocos-games/02-star-survivor",
+  "build": "/Volumes/张小宝/202611/.studio-dev/cocos-games/02-star-survivor/build/web-mobile",
+  "shots": {
+    "cocos-title": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/02-star-survivor/shots/cocos-title.png",
+      "bytes": 70347
+    },
+    "cocos-play": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/02-star-survivor/shots/cocos-play.png",
+      "bytes": 33148
+    },
+    "cocos-result": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/02-star-survivor/shots/cocos-result.png",
+      "bytes": 38661
+    }
+  },
+  "errors": [],
+  "warnings": [],
+  "checks": [
+    {
+      "name": "boot",
+      "ok": true,
+      "info": {
+        "ready": true
+      }
+    },
+    {
+      "name": "play",
+      "ok": true,
+      "info": {
+        "scene": "play",
+        "level": 3,
+        "fps": 43,
+        "rule": {
+          "time": 4.15,
+          "hp": 112,
+          "maxHp": 112,
+          "lvl": 1,
+          "xp": 0,
+          "xpNeed": 4,
+          "kills": 1,
+          "enemies": 2,
+          "gems": 1,
+          "atk": 13,
+          "rate": 0.42,
+          "range": 430,
+          "shots": 1,
+          "pierce": 0,
+          "speed": 214,
+          "phase": "play",
+          "bossHp": 0,
+          "bossKilled": false,
+          "spawned": 3,
+          "status": "playing"
+        }
+      }
+    },
+    {
+      "name": "result",
+      "ok": true,
+      "info": {
+        "scene": "result",
+        "result": {
+          "win": true,
+          "stars": 3
+        },
+        "fps": 27
+      }
+    },
+    {
+      "name": "console",
+      "ok": true,
+      "info": {
+        "errors": 0
+      }
+    }
+  ],
+  "boot": {
+    "scene": "title",
+    "fps": 18,
+    "W": 1280,
+    "H": 720,
+    "gs": {
+      "W": 1280,
+      "H": 720
+    }
+  },
+  "play": {
+    "scene": "play",
+    "level": 3,
+    "fps": 43,
+    "rule": {
+      "time": 4.15,
+      "hp": 112,
+      "maxHp": 112,
+      "lvl": 1,
+      "xp": 0,
+      "xpNeed": 4,
+      "kills": 1,
+      "enemies": 2,
+      "gems": 1,
+      "atk": 13,
+      "rate": 0.42,
+      "range": 430,
+      "shots": 1,
+      "pierce": 0,
+      "speed": 214,
+      "phase": "play",
+      "bossHp": 0,
+      "bossKilled": false,
+      "spawned": 3,
+      "status": "playing"
+    }
+  },
+  "softwareRenderNote": "无头 Chrome 使用软件渲染；真机/有 GPU 环境通常 60fps",
+  "fastForward": "won",
+  "result": {
+    "scene": "result",
+    "result": {
+      "win": true,
+      "stars": 3
+    },
+    "fps": 27
+  },
+  "durationMs": 14148
+}

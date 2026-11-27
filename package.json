@@ -1,9 +1,9 @@
 {
   "name": "dsh-game-studio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "游戏工坊：一句话描述生成完整可玩的 HTML5 游戏（程序化美术/音频、关卡生成、无头仿真与浏览器自检），并附带游戏开发方法论与项目迭代工具。",
+  "description": "游戏工坊：一句话生成完整可玩的游戏——HTML5 单文件离线版或 Cocos Creator 3.8 工程（共用同一套玩法/内容），并附带机器人逐关仿真、Cocos CLI 构建、无头浏览器截图验收与游戏开发方法论。",
   "exports": {
     ".": "./index.js",
     "./locale/*.json": "./locale/*.json",

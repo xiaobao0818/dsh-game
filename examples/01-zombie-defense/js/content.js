@@ -339,7 +339,7 @@ export const CONTENT = {
       },
       {
         "id": "frost",
-        "name": "五雷正法",
+        "name": "五雷",
         "cd": 20,
         "radius": 150,
         "dmg": 26,
@@ -349,7 +349,7 @@ export const CONTENT = {
       },
       {
         "id": "heal",
-        "name": "三昧真火",
+        "name": "三昧",
         "cd": 24,
         "radius": 9999,
         "heal": 45,

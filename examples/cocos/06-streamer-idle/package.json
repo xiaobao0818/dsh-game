@@ -1,0 +1,13 @@
+{
+  "name": "idle-dev",
+  "creator": {
+    "version": "3.8.8"
+  },
+  "uuid": "d4a4ae0a-dc84-41ca-84f4-942e4a3be98e",
+  "version": "1.0.0",
+  "description": "三十天开播 · Cocos Creator 3.8 版（游戏工坊生成）",
+  "scripts": {
+    "build:web": "bash tools/build-web.sh",
+    "smoke": "node tools/cocos-smoke.mjs --project ."
+  }
+}

@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Game studio",
-    "description": "Turn one sentence into a complete playable HTML5 game: editable project, offline single-file build, and automated checks. Say \"make a tower-defense game about…\" to trigger game_forge; use game_plan to preview choices and game_build / game_check to iterate and verify. Procedural placeholder art and synthesized audio; no installer packaging; browser checks need local Chrome.",
+    "description": "Turn one sentence into a complete playable game: an offline single-file HTML5 build or a Cocos Creator 3.8 project (buildable to Web/Android/iOS/HarmonyOS). Both targets share the same gameplay and content, with bot playthrough simulation, Cocos CLI builds and headless-browser screenshot checks. Say \"make a tower defense\" or \"make it in Cocos\" to trigger game_forge.",
     "detail": "docs/PREVIEW.md"
   }
 }

@@ -1,0 +1,142 @@
+{
+  "ok": true,
+  "project": "/Volumes/张小宝/202611/.studio-dev/cocos-games/03-hotpot-merge",
+  "build": "/Volumes/张小宝/202611/.studio-dev/cocos-games/03-hotpot-merge/build/web-mobile",
+  "shots": {
+    "cocos-title": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/03-hotpot-merge/shots/cocos-title.png",
+      "bytes": 29423
+    },
+    "cocos-play": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/03-hotpot-merge/shots/cocos-play.png",
+      "bytes": 40267
+    },
+    "cocos-result": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/03-hotpot-merge/shots/cocos-result.png",
+      "bytes": 18627
+    }
+  },
+  "errors": [],
+  "warnings": [],
+  "checks": [
+    {
+      "name": "boot",
+      "ok": true,
+      "info": {
+        "ready": true
+      }
+    },
+    {
+      "name": "play",
+      "ok": true,
+      "info": {
+        "scene": "play",
+        "level": 3,
+        "fps": 27,
+        "rule": {
+          "gold": 50,
+          "baseHp": 98,
+          "enemies": 0,
+          "units": 0,
+          "kills": 0,
+          "leaked": 0,
+          "time": 5,
+          "spawned": 0,
+          "schedule": 14,
+          "merges": 0,
+          "summons": 0,
+          "bestTier": 1,
+          "dps": 0,
+          "sel": -1,
+          "cells": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "status": "playing"
+        }
+      }
+    },
+    {
+      "name": "result",
+      "ok": true,
+      "info": {
+        "scene": "result",
+        "result": {
+          "win": true,
+          "stars": 3
+        },
+        "fps": 53
+      }
+    },
+    {
+      "name": "console",
+      "ok": true,
+      "info": {
+        "errors": 0
+      }
+    }
+  ],
+  "boot": {
+    "scene": "title",
+    "fps": 24,
+    "W": 720,
+    "H": 1280,
+    "gs": {
+      "W": 720,
+      "H": 1280
+    }
+  },
+  "play": {
+    "scene": "play",
+    "level": 3,
+    "fps": 27,
+    "rule": {
+      "gold": 50,
+      "baseHp": 98,
+      "enemies": 0,
+      "units": 0,
+      "kills": 0,
+      "leaked": 0,
+      "time": 5,
+      "spawned": 0,
+      "schedule": 14,
+      "merges": 0,
+      "summons": 0,
+      "bestTier": 1,
+      "dps": 0,
+      "sel": -1,
+      "cells": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "status": "playing"
+    }
+  },
+  "softwareRenderNote": "无头 Chrome 使用软件渲染；真机/有 GPU 环境通常 60fps",
+  "fastForward": "won",
+  "result": {
+    "scene": "result",
+    "result": {
+      "win": true,
+      "stars": 3
+    },
+    "fps": 53
+  },
+  "durationMs": 13832
+}

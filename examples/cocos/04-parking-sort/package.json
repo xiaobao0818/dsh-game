@@ -1,0 +1,13 @@
+{
+  "name": "sort-dev",
+  "creator": {
+    "version": "3.8.8"
+  },
+  "uuid": "d3484fd0-423d-47b8-a720-ad8807f453a4",
+  "version": "1.0.0",
+  "description": "老小区归位 · Cocos Creator 3.8 版（游戏工坊生成）",
+  "scripts": {
+    "build:web": "bash tools/build-web.sh",
+    "smoke": "node tools/cocos-smoke.mjs --project ."
+  }
+}

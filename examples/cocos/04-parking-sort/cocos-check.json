@@ -1,0 +1,155 @@
+{
+  "ok": true,
+  "engine": "cocos",
+  "checks": [
+    {
+      "name": "structure",
+      "ok": true,
+      "info": {
+        "creator": "3.8.8",
+        "engine": "cocos",
+        "levels": 25
+      }
+    },
+    {
+      "name": "build",
+      "ok": true,
+      "info": {
+        "ms": 12015,
+        "out": "build/web-mobile/index.html"
+      }
+    },
+    {
+      "name": "browser",
+      "ok": true,
+      "info": {
+        "boot": {
+          "scene": "title",
+          "fps": 29,
+          "W": 720,
+          "H": 1280,
+          "gs": {
+            "W": 720,
+            "H": 1280
+          }
+        },
+        "play": {
+          "scene": "play",
+          "level": 3,
+          "fps": 24,
+          "rule": {
+            "time": 4.75,
+            "score": 0,
+            "moves": 0,
+            "kills": 0,
+            "clears": 0,
+            "cleared": 0,
+            "total": 24,
+            "queue": 19,
+            "belt": 0,
+            "pull": 3,
+            "jam": 0,
+            "lanes": [
+              0,
+              2,
+              3
+            ],
+            "planFails": 0,
+            "status": "playing"
+          }
+        },
+        "result": {
+          "scene": "result",
+          "result": {
+            "win": true,
+            "stars": 2
+          },
+          "fps": 48
+        },
+        "shots": {
+          "cocos-title": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/04-parking-sort/shots/cocos-title.png",
+            "bytes": 29946
+          },
+          "cocos-play": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/04-parking-sort/shots/cocos-play.png",
+            "bytes": 46253
+          },
+          "cocos-result": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/04-parking-sort/shots/cocos-result.png",
+            "bytes": 20599
+          }
+        },
+        "durationMs": 14066
+      }
+    }
+  ],
+  "failures": [],
+  "warnings": [],
+  "stats": {
+    "build": {
+      "ok": true,
+      "ms": 12015
+    },
+    "browser": {
+      "boot": {
+        "scene": "title",
+        "fps": 29,
+        "W": 720,
+        "H": 1280,
+        "gs": {
+          "W": 720,
+          "H": 1280
+        }
+      },
+      "play": {
+        "scene": "play",
+        "level": 3,
+        "fps": 24,
+        "rule": {
+          "time": 4.75,
+          "score": 0,
+          "moves": 0,
+          "kills": 0,
+          "clears": 0,
+          "cleared": 0,
+          "total": 24,
+          "queue": 19,
+          "belt": 0,
+          "pull": 3,
+          "jam": 0,
+          "lanes": [
+            0,
+            2,
+            3
+          ],
+          "planFails": 0,
+          "status": "playing"
+        }
+      },
+      "result": {
+        "scene": "result",
+        "result": {
+          "win": true,
+          "stars": 2
+        },
+        "fps": 48
+      },
+      "shots": {
+        "cocos-title": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/04-parking-sort/shots/cocos-title.png",
+          "bytes": 29946
+        },
+        "cocos-play": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/04-parking-sort/shots/cocos-play.png",
+          "bytes": 46253
+        },
+        "cocos-result": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/04-parking-sort/shots/cocos-result.png",
+          "bytes": 20599
+        }
+      },
+      "durationMs": 14066
+    }
+  }
+}

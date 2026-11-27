@@ -58,6 +58,11 @@ export function buildContent({ theme, title, subtitle, tagline, levelCount = 30,
   };
 }
 
+function shortName(name, fallback) {
+  const n = String(name || fallback || '技能');
+  return n.length > 3 ? n.slice(0, 2) : n;
+}
+
 function buildDefs(theme) {
   const v = theme.vocab;
   return {
@@ -80,9 +85,9 @@ function buildDefs(theme) {
       { id: 'boss', name: v.boss[0] || '首领', hp: 900, atk: 34, speed: 22, range: 34, cd: 1.2, gold: 120, radius: 22, boss: true },
     ],
     spells: [
-      { id: 'thunder', name: v.power[0] || '天雷', cd: 15, radius: 132, dmg: 95, unlock: 1 },
-      { id: 'frost', name: v.power[1] || '冰封', cd: 20, radius: 150, dmg: 26, slow: 0.45, slowT: 3.2, unlock: 4 },
-      { id: 'heal', name: v.power[2] || '急救', cd: 24, radius: 9999, heal: 45, unlock: 7 },
+      { id: 'thunder', name: shortName(v.power[0], '天雷'), cd: 15, radius: 132, dmg: 95, unlock: 1 },
+      { id: 'frost', name: shortName(v.power[1], '冰封'), cd: 20, radius: 150, dmg: 26, slow: 0.45, slowT: 3.2, unlock: 4 },
+      { id: 'heal', name: shortName(v.power[2], '急救'), cd: 24, radius: 9999, heal: 45, unlock: 7 },
     ],
   };
 }

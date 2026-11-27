@@ -1,0 +1,173 @@
+{
+  "ok": true,
+  "engine": "cocos",
+  "checks": [
+    {
+      "name": "structure",
+      "ok": true,
+      "info": {
+        "creator": "3.8.8",
+        "engine": "cocos",
+        "levels": 24
+      }
+    },
+    {
+      "name": "build",
+      "ok": true,
+      "info": {
+        "ms": 11791,
+        "out": "build/web-mobile/index.html"
+      }
+    },
+    {
+      "name": "browser",
+      "ok": true,
+      "info": {
+        "boot": {
+          "scene": "title",
+          "fps": 24,
+          "W": 720,
+          "H": 1280,
+          "gs": {
+            "W": 720,
+            "H": 1280
+          }
+        },
+        "play": {
+          "scene": "play",
+          "level": 3,
+          "fps": 27,
+          "rule": {
+            "gold": 50,
+            "baseHp": 98,
+            "enemies": 0,
+            "units": 0,
+            "kills": 0,
+            "leaked": 0,
+            "time": 5,
+            "spawned": 0,
+            "schedule": 14,
+            "merges": 0,
+            "summons": 0,
+            "bestTier": 1,
+            "dps": 0,
+            "sel": -1,
+            "cells": [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            "status": "playing"
+          }
+        },
+        "result": {
+          "scene": "result",
+          "result": {
+            "win": true,
+            "stars": 3
+          },
+          "fps": 53
+        },
+        "shots": {
+          "cocos-title": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/03-hotpot-merge/shots/cocos-title.png",
+            "bytes": 29423
+          },
+          "cocos-play": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/03-hotpot-merge/shots/cocos-play.png",
+            "bytes": 40267
+          },
+          "cocos-result": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/03-hotpot-merge/shots/cocos-result.png",
+            "bytes": 18627
+          }
+        },
+        "durationMs": 13832
+      }
+    }
+  ],
+  "failures": [],
+  "warnings": [],
+  "stats": {
+    "build": {
+      "ok": true,
+      "ms": 11791
+    },
+    "browser": {
+      "boot": {
+        "scene": "title",
+        "fps": 24,
+        "W": 720,
+        "H": 1280,
+        "gs": {
+          "W": 720,
+          "H": 1280
+        }
+      },
+      "play": {
+        "scene": "play",
+        "level": 3,
+        "fps": 27,
+        "rule": {
+          "gold": 50,
+          "baseHp": 98,
+          "enemies": 0,
+          "units": 0,
+          "kills": 0,
+          "leaked": 0,
+          "time": 5,
+          "spawned": 0,
+          "schedule": 14,
+          "merges": 0,
+          "summons": 0,
+          "bestTier": 1,
+          "dps": 0,
+          "sel": -1,
+          "cells": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "status": "playing"
+        }
+      },
+      "result": {
+        "scene": "result",
+        "result": {
+          "win": true,
+          "stars": 3
+        },
+        "fps": 53
+      },
+      "shots": {
+        "cocos-title": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/03-hotpot-merge/shots/cocos-title.png",
+          "bytes": 29423
+        },
+        "cocos-play": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/03-hotpot-merge/shots/cocos-play.png",
+          "bytes": 40267
+        },
+        "cocos-result": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/03-hotpot-merge/shots/cocos-result.png",
+          "bytes": 18627
+        }
+      },
+      "durationMs": 13832
+    }
+  }
+}

@@ -337,6 +337,7 @@ export function createRule(svc) {
   }
   function ensureBg(ctx) {
     if (bgCache || typeof document === 'undefined') return bgCache;
+    if (typeof ctx.drawImage !== 'function') return null; // Cocos 宿主：直接重绘，避免依赖 drawImage
     const dpr = Math.min(2, (ctx.getTransform && ctx.getTransform().a) || 1); const c = document.createElement('canvas');
     c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); const g = c.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0); paintStatic(g);

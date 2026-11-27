@@ -1,0 +1,31 @@
+{
+  "generator": "dsh-game-studio",
+  "engine": "cocos",
+  "creator": "3.8.8",
+  "version": 1,
+  "slug": "survivor-dev",
+  "title": "星海幸存者",
+  "subtitle": "太空科幻 · 无人机的冒险",
+  "tagline": "走位躲潮，自动攻击；升级三选一，撑到 Boss 倒下。",
+  "genre": "survivor",
+  "theme": "space",
+  "orientation": "landscape",
+  "levels": 24,
+  "seed": 2425638784,
+  "brief": "太空科幻题材的割草生存，24关，横屏",
+  "plan": {
+    "theme": "space",
+    "themeReason": "space(4) / wasteland(2)",
+    "genre": "survivor",
+    "genreReason": "割草,生存",
+    "title": "星海幸存者",
+    "levels": 24,
+    "orientation": "landscape",
+    "engine": "cocos"
+  },
+  "designResolution": {
+    "width": 1280,
+    "height": 720
+  },
+  "createdAt": "2026-11-27T10:52:27.096Z"
+}

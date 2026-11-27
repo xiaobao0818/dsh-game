@@ -26,7 +26,7 @@
       "ok": true,
       "info": {
         "file": "老小区归位.html",
-        "kb": 138.9,
+        "kb": 140.7,
         "external": 0
       }
     },
@@ -42,7 +42,7 @@
         "W": 720,
         "H": 1280,
         "rule": {
-          "time": 2.92,
+          "time": 2.87,
           "score": 0,
           "moves": 0,
           "kills": 0,
@@ -87,7 +87,7 @@
     },
     "singlefile": {
       "file": "老小区归位.html",
-      "kb": 138.9,
+      "kb": 140.7,
       "external": 0
     },
     "browser": {
@@ -99,7 +99,7 @@
       "W": 720,
       "H": 1280,
       "rule": {
-        "time": 2.92,
+        "time": 2.87,
         "score": 0,
         "moves": 0,
         "kills": 0,

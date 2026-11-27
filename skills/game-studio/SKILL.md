@@ -1,19 +1,25 @@
 ---
 name: game-studio
-description: 游戏工坊：把一句玩法描述变成完整可玩的 HTML5 游戏，或按已沉淀的流水线手工开发/迭代游戏。用于"做一个小游戏/复刻某玩法/把原型做成完整游戏/加关卡加美术加音效/游戏上线前自检"，也用于审查游戏工程质量与移动端体验。
+description: 游戏工坊：把一句玩法描述变成完整可玩的 HTML5 游戏或 Cocos Creator 3.8 工程，或按已沉淀的流水线手工开发/迭代游戏。用于"做一个小游戏/复刻某玩法/把原型做成完整游戏/要 Cocos 工程做多端发行/加关卡加美术加音效/游戏上线前自检"，也用于审查游戏工程质量与移动端体验。
 ---
 
 # 游戏工坊 · 作业手册
 
 一句话 → 完整游戏。本技能配套 5 个工具：`game_genres` / `game_plan` / `game_forge` / `game_build` / `game_check`。
-生成物是**零依赖、零外部请求、双击即玩**的单文件 HTML5 游戏（Canvas 程序化美术 + WebAudio 合成音乐音效 + localStorage 存档），
-同时保留可编辑的多文件工程（内容表与规则分离）。
+支持两种运行时：
+
+- **HTML5（默认）**：零依赖、零外部请求、双击即玩的单文件 HTML5 游戏（Canvas 程序化美术 + WebAudio 合成 + localStorage 存档）；
+- **Cocos Creator 3.8**：生成可打开的 Cocos 工程（场景/TS 脚本/项目配置齐全），与 HTML 版共用同一套内容与规则，
+  可用 Cocos CLI 构建 Web/Android/iOS/鸿蒙（`bash tools/build-web.sh`）。
+
+两种目标都保留可编辑的多文件工程（内容表与规则分离）。
 
 ## 1. 什么时候用哪个工具
 
 | 用户说 | 动作 |
 |---|---|
 | "做一个小游戏：……" / "复刻这个玩法" | 直接 `game_forge({brief, dir})`，一句话即可；不要先写代码 |
+| "要 Cocos 工程 / 要能打包安卓鸿蒙 / 用 Cocos 做" | `game_forge({brief, dir, engine: "cocos"})`；描述里出现 Cocos 也会自动选 Cocos |
 | "先看看你会做成什么" / 描述很模糊 | `game_plan({brief})` 确认题材/基因/标题/关卡数，再 forge |
 | "换个题材/换风格/改关卡数" | 重新 `game_forge`（新 dir），或改 `js/content.js` 的 theme/levels 后 `game_build` |
 | "改玩法/加机制/修 bug" | 编辑工程 `js/rules/<genre>.js` 或 `js/content.js` → `game_build` → `game_check` |
@@ -21,6 +27,19 @@ description: 游戏工坊：把一句玩法描述变成完整可玩的 HTML5 游
 | "生成的新游戏打不开/不好玩" | 先 `game_check` 拿到失败项，再按 §10 的坑排查 |
 
 `dir` 用工作区内新目录（英文/拼音），例如 `<workspace>/games/moon-defense`。默认不覆盖非空目录。
+
+## 1.5 两种运行时怎么选
+
+| | HTML5 | Cocos Creator 3.8 |
+|---|---|---|
+| 交付物 | `dist/<名>.html` 单文件，双击即玩 | Cocos 工程 + `build/web-mobile/index.html`（可再接 Android/iOS/鸿蒙导出） |
+| 适合 | 网页/小游戏平台/IAA 试玩/邮件附件 | 需要接 Cocos 生态、原生包、团队美术动效、渠道发行 |
+| 构建 | 自写零依赖打包器，秒级 | Cocos CLI，首次约 40~60s（引擎缓存后 5~20s） |
+| 自检 | 数据 + 机器人逐关仿真 + 单文件 + 无头 Chrome | 工程结构 + Cocos CLI 构建 + 无头 Chrome(WebGL) 启动/战斗/结算 + 截图 |
+| 渲染 | Canvas2D 立即模式，视觉最接近设计 | Cocos Graphics + Label 桥（同一套绘制代码）；径向光晕/阴影/虚线为近似或省略 |
+| 性能 | 60fps（本机） | 真机/有 GPU 60fps；无头软件渲染约 20~26fps，勿据此判死 |
+
+选型原则：**先用 HTML 验证玩法与数值**（快、可视化验收成本最低），玩法成立后再 `engine: "cocos"` 出工程做多端与美术升级。
 
 ## 2. 交付闸（六道，缺一不可）
 
@@ -119,6 +138,10 @@ docs/{DESIGN,TESTING}.md        README.md、game.json（生成记录）
 8. 单文件残留外链/字体 → 断网白屏；构建后断言零外部引用。
 9. 文档与代码漂移（数值公式只在文档里改）→ 公式必须有单点断言，或只写在一处。
 10. 帧率塌方：每帧 new 对象/重建路径太多 → 复用数组/路径缓存；目标中端机 60fps。
+11. Cocos 端 `window.__game` 没就绪 → GameRoot 的 `start()` 里异常被吞；先看浏览器控制台 `[GS] ready` 日志。
+12. Cocos CLI 构建偶发非 0 退出但产物已生成 → 以 `build/web-mobile/index.html` 是否存在为准，按脚本重试 3 次。
+13. Cocos 无头冒烟必须带 WebGL 软件渲染参数（`--enable-unsafe-swiftshader --use-angle=swiftshader`），否则黑屏。
+14. 改 Cocos 工程后不重新构建就发版 → `game_build` 会强制跑一次 Cocos CLI 构建，产物与源码版本一致。
 
 ## 11. 生成之后怎么继续做
 

@@ -11,7 +11,7 @@ import * as R from './render.js';
 const STEP = 1 / 60;
 
 export class App {
-  constructor(canvas, content, createRule) {
+  constructor(canvas, content, createRule, opts = {}) {
     this.canvas = canvas;
     this.content = content;
     this.createRule = createRule;
@@ -33,6 +33,8 @@ export class App {
     this.levelId = 0; this.rule = null; this.pendingResult = null; this.finishing = 0;
     this.paused = false;
     this.started = false;
+    this.externalLoop = !!opts.externalLoop;
+    this.fixedViewport = !!opts.fixedViewport;
     this.demoT = 0;
     this.tipsSeen = this.save.data.tipsSeen || {};
     this.inputBound = false;
@@ -41,15 +43,17 @@ export class App {
   }
   mount() {
     this.layout.resize();
-    this.layout.applyTransform(this.ctx);
+    if (!this.fixedViewport) this.layout.applyTransform(this.ctx);
     this.input = new Input(this.canvas, this.layout, {
       onDown: (x, y) => this.onDown(x, y),
       onMove: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('move', x, y); },
       onUp: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('up', x, y); },
       onKey: (k) => this.onKey(k),
     });
-    document.addEventListener('visibilitychange', () => { if (document.hidden && this.scene === 'play') this.setPaused(true); });
-    requestAnimationFrame(this.loop);
+    if (typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('visibilitychange', () => { if (document.hidden && this.scene === 'play') this.setPaused(true); });
+    }
+    if (!this.externalLoop) requestAnimationFrame(this.loop);
   }
   begin() {
     if (this.started) return;
@@ -63,6 +67,15 @@ export class App {
     if (!this.last) this.last = ts;
     let dt = (ts - this.last) / 1000; this.last = ts;
     if (dt > 0.25) dt = 0.25;
+    this.frame(dt);
+    if (!this.externalLoop) requestAnimationFrame(this.loop);
+  }
+  /** 外部驱动（Cocos 宿主）：由引擎的 update(dt) 调用，不自行 requestAnimationFrame */
+  tickExternal(dt) {
+    const d = Math.min(dt || 0.016, 0.25);
+    this.frame(d);
+  }
+  frame(dt) {
     this.frames++; this.fpsT += dt;
     if (this.fpsT >= 0.5) { this.fps = this.frames / this.fpsT; this.frames = 0; this.fpsT = 0; }
     this.sceneT += dt; this.demoT += dt;
@@ -87,7 +100,6 @@ export class App {
       }
     }
     this.render(dt);
-    requestAnimationFrame(this.loop);
   }
   step(dt) {
     if (!this.rule) return;

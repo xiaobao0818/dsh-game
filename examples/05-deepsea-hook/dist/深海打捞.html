@@ -198,6 +198,18 @@ class Layout {
     this.resize();
   }
   resize() {
+    // 固定视口模式（Cocos 宿主）：设计分辨率由引擎缩放，这里不再做 DOM 适配
+    if (this.canvas && this.canvas.__gsFixed) {
+      this.scale = 1; this.ox = 0; this.oy = 0; this.dpr = 1;
+      this.canvas.width = this.W; this.canvas.height = this.H;
+      if (this.canvas.style) {
+        this.canvas.style.width = this.W + 'px';
+        this.canvas.style.height = this.H + 'px';
+        this.canvas.style.marginLeft = '0px';
+        this.canvas.style.marginTop = '0px';
+      }
+      return;
+    }
     // 限制总像素（约 240 万），保证竖屏高分设备也能 60fps
     const baseDpr = Math.min(2, window.devicePixelRatio || 1);
     const dpr = Math.max(1, Math.min(baseDpr, Math.sqrt(2400000 / (this.W * this.H))));
@@ -452,6 +464,7 @@ class Input {
       this.active.delete(e.pointerId ?? 0);
       e.preventDefault();
     };
+    if (canvas.__gsFixed) return; // Cocos 等固定视口宿主自行转发输入
     canvas.addEventListener('pointerdown', down, { passive: false });
     canvas.addEventListener('pointermove', move, { passive: false });
     canvas.addEventListener('pointerup', up, { passive: false });
@@ -934,7 +947,7 @@ const R = __m["js/render.js"];
 const STEP = 1 / 60;
 
 class App {
-  constructor(canvas, content, createRule) {
+  constructor(canvas, content, createRule, opts = {}) {
     this.canvas = canvas;
     this.content = content;
     this.createRule = createRule;
@@ -956,6 +969,8 @@ class App {
     this.levelId = 0; this.rule = null; this.pendingResult = null; this.finishing = 0;
     this.paused = false;
     this.started = false;
+    this.externalLoop = !!opts.externalLoop;
+    this.fixedViewport = !!opts.fixedViewport;
     this.demoT = 0;
     this.tipsSeen = this.save.data.tipsSeen || {};
     this.inputBound = false;
@@ -964,15 +979,17 @@ class App {
   }
   mount() {
     this.layout.resize();
-    this.layout.applyTransform(this.ctx);
+    if (!this.fixedViewport) this.layout.applyTransform(this.ctx);
     this.input = new Input(this.canvas, this.layout, {
       onDown: (x, y) => this.onDown(x, y),
       onMove: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('move', x, y); },
       onUp: (x, y) => { if (this.scene === 'play' && this.rule && !this.paused) this.rule.pointer('up', x, y); },
       onKey: (k) => this.onKey(k),
     });
-    document.addEventListener('visibilitychange', () => { if (document.hidden && this.scene === 'play') this.setPaused(true); });
-    requestAnimationFrame(this.loop);
+    if (typeof document !== 'undefined' && document.addEventListener) {
+      document.addEventListener('visibilitychange', () => { if (document.hidden && this.scene === 'play') this.setPaused(true); });
+    }
+    if (!this.externalLoop) requestAnimationFrame(this.loop);
   }
   begin() {
     if (this.started) return;
@@ -986,6 +1003,15 @@ class App {
     if (!this.last) this.last = ts;
     let dt = (ts - this.last) / 1000; this.last = ts;
     if (dt > 0.25) dt = 0.25;
+    this.frame(dt);
+    if (!this.externalLoop) requestAnimationFrame(this.loop);
+  }
+  /** 外部驱动（Cocos 宿主）：由引擎的 update(dt) 调用，不自行 requestAnimationFrame */
+  tickExternal(dt) {
+    const d = Math.min(dt || 0.016, 0.25);
+    this.frame(d);
+  }
+  frame(dt) {
     this.frames++; this.fpsT += dt;
     if (this.fpsT >= 0.5) { this.fps = this.frames / this.fpsT; this.frames = 0; this.fpsT = 0; }
     this.sceneT += dt; this.demoT += dt;
@@ -1010,7 +1036,6 @@ class App {
       }
     }
     this.render(dt);
-    requestAnimationFrame(this.loop);
   }
   step(dt) {
     if (!this.rule) return;
@@ -3192,7 +3217,7 @@ function createRule(svc) {
 return { createRule };
 })();
 __m["js/main.js"] = (function(){
-/* 入口：创建 App，绑定启动遮罩；window.__game 供调试与自动化测试使用 */
+/* 入口：创建 App；HTML 下自动绑定启动遮罩，Cocos/其它宿主通过 bootGame 复用 */
 const { App } = __m["js/app.js"];
 
 const { CONTENT } = __m["js/content.js"];
@@ -3200,23 +3225,37 @@ const { CONTENT } = __m["js/content.js"];
 const { createRule } = __m["js/rules/hook.js"];
 
 
-const canvas = document.getElementById('game');
-const app = new App(canvas, CONTENT, createRule);
-app.mount();
-window.__game = app;
-
-const boot = document.getElementById('boot');
-function hideBoot() {
-  if (boot && boot.parentNode) {
-    boot.classList.add('hide');
-    setTimeout(() => { try { boot.remove(); } catch (e) {} }, 420);
-  }
-  app.begin();
+/** 创建一个游戏实例（宿主无关）。canvas 可为真实 canvas 或 Cocos 宿主的固定视口代理 */
+function bootGame(canvas, opts = {}) {
+  const app = new App(canvas, CONTENT, createRule, opts);
+  app.mount();
+  return app;
 }
-if (boot) boot.addEventListener('pointerdown', hideBoot, { once: true });
-window.addEventListener('pointerdown', () => app.begin(), { once: true });
 
-return {  };
+/** HTML/DOM 环境入口：找 #game 画布、显示启动遮罩、暴露 window.__game */
+function bootDom() {
+  if (typeof document === 'undefined') return null;
+  const canvas = document.getElementById('game');
+  if (!canvas) return null;
+  const app = bootGame(canvas);
+  window.__game = app;
+  const boot = document.getElementById('boot');
+  function hideBoot() {
+    if (boot && boot.parentNode) {
+      boot.classList.add('hide');
+      setTimeout(() => { try { boot.remove(); } catch (e) {} }, 420);
+    }
+    app.begin();
+  }
+  if (boot) boot.addEventListener('pointerdown', hideBoot, { once: true });
+  window.addEventListener('pointerdown', () => app.begin(), { once: true });
+  return app;
+}
+
+// 仅在存在 #game 的 DOM 页面自动启动（单文件/工程版）；Cocos 内由宿主调用 bootGame
+if (typeof document !== 'undefined' && document.getElementById('game')) bootDom();
+
+return { bootGame, bootDom };
 })();
 })();
 

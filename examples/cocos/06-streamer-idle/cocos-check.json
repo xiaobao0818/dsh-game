@@ -1,0 +1,168 @@
+{
+  "ok": true,
+  "engine": "cocos",
+  "checks": [
+    {
+      "name": "structure",
+      "ok": true,
+      "info": {
+        "creator": "3.8.8",
+        "engine": "cocos",
+        "levels": 24
+      }
+    },
+    {
+      "name": "build",
+      "ok": true,
+      "info": {
+        "ms": 11831,
+        "out": "build/web-mobile/index.html"
+      }
+    },
+    {
+      "name": "browser",
+      "ok": true,
+      "info": {
+        "boot": {
+          "scene": "title",
+          "fps": 30,
+          "W": 720,
+          "H": 1280,
+          "gs": {
+            "W": 720,
+            "H": 1280
+          }
+        },
+        "play": {
+          "scene": "play",
+          "level": 3,
+          "fps": 19,
+          "rule": {
+            "status": "playing",
+            "phase": "plan",
+            "day": 1,
+            "ap": 2,
+            "coins": 110,
+            "rev": 0,
+            "fans": 0,
+            "target": 2777,
+            "fanTarget": 118,
+            "staff": 0,
+            "venue": 1,
+            "inc": 2.22,
+            "time": 4.3,
+            "kills": 0,
+            "win": false,
+            "stars": 0,
+            "reason": "",
+            "finalRatio": 0,
+            "spend": 0,
+            "hires": 0,
+            "upgs": 0,
+            "showUses": 0
+          }
+        },
+        "result": {
+          "scene": "result",
+          "result": {
+            "win": true,
+            "stars": 3
+          },
+          "fps": 28
+        },
+        "shots": {
+          "cocos-title": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/06-streamer-idle/shots/cocos-title.png",
+            "bytes": 28164
+          },
+          "cocos-play": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/06-streamer-idle/shots/cocos-play.png",
+            "bytes": 59573
+          },
+          "cocos-result": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/06-streamer-idle/shots/cocos-result.png",
+            "bytes": 20688
+          }
+        },
+        "durationMs": 14102
+      }
+    }
+  ],
+  "failures": [],
+  "warnings": [
+    {
+      "name": "browser",
+      "msg": "FPS 偏低（无头软件渲染）：19"
+    }
+  ],
+  "stats": {
+    "build": {
+      "ok": true,
+      "ms": 11831
+    },
+    "browser": {
+      "boot": {
+        "scene": "title",
+        "fps": 30,
+        "W": 720,
+        "H": 1280,
+        "gs": {
+          "W": 720,
+          "H": 1280
+        }
+      },
+      "play": {
+        "scene": "play",
+        "level": 3,
+        "fps": 19,
+        "rule": {
+          "status": "playing",
+          "phase": "plan",
+          "day": 1,
+          "ap": 2,
+          "coins": 110,
+          "rev": 0,
+          "fans": 0,
+          "target": 2777,
+          "fanTarget": 118,
+          "staff": 0,
+          "venue": 1,
+          "inc": 2.22,
+          "time": 4.3,
+          "kills": 0,
+          "win": false,
+          "stars": 0,
+          "reason": "",
+          "finalRatio": 0,
+          "spend": 0,
+          "hires": 0,
+          "upgs": 0,
+          "showUses": 0
+        }
+      },
+      "result": {
+        "scene": "result",
+        "result": {
+          "win": true,
+          "stars": 3
+        },
+        "fps": 28
+      },
+      "shots": {
+        "cocos-title": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/06-streamer-idle/shots/cocos-title.png",
+          "bytes": 28164
+        },
+        "cocos-play": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/06-streamer-idle/shots/cocos-play.png",
+          "bytes": 59573
+        },
+        "cocos-result": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/06-streamer-idle/shots/cocos-result.png",
+          "bytes": 20688
+        }
+      },
+      "durationMs": 14102
+    }
+  }
+}

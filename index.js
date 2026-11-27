@@ -61,8 +61,19 @@ async function engineCall(argv, timeout) {
 
 function compactForge(data) {
   if (!data || data.ok === false && data.error) return data;
+  const isCocos = data.engine === 'cocos';
+  const checks = data.checks ? {
+    ok: data.checks.ok,
+    sim: data.checks.stats?.sim,
+    singlefile: data.checks.stats?.singlefile,
+    build: data.checks.stats?.build,
+    browser: isCocos ? data.checks.stats?.browser && { play: data.checks.stats.browser.play, result: data.checks.stats.browser.result } : data.checks.stats?.browser,
+    failures: (data.checks.failures || []).slice(0, 10),
+    warnings: (data.checks.warnings || []).slice(0, 10),
+  } : null;
   return {
     ok: data.ok,
+    engine: data.engine || 'html',
     dir: data.dir,
     title: data.title,
     genre: data.genre,
@@ -72,24 +83,25 @@ function compactForge(data) {
     levels: data.levels,
     orientation: data.orientation,
     seed: data.seed,
-    singleFile: data.singleFile,
-    singleFileKB: data.singleFileKB,
+    creator: data.creator ?? null,
+    designResolution: data.designResolution ?? null,
+    webBuild: data.webBuild ?? null,
+    singleFile: data.singleFile ?? null,
+    singleFileKB: data.singleFileKB ?? null,
     plan: data.plan,
-    checks: data.checks ? {
-      ok: data.checks.ok,
-      sim: data.checks.stats?.sim,
-      singlefile: data.checks.stats?.singlefile,
-      browser: data.checks.stats?.browser,
-      failures: (data.checks.failures || []).slice(0, 10),
-      warnings: (data.checks.warnings || []).slice(0, 10),
-    } : null,
+    checks,
     warnings: data.warnings || [],
     error: data.error,
-    nextSteps: data.ok ? [
+    nextSteps: data.ok ? (isCocos ? [
+      '用 Cocos Creator 3.8.8 打开工程目录：' + data.dir,
+      '构建 Web Mobile：cd ' + data.dir + ' && bash tools/build-web.sh（产物 build/web-mobile/index.html，可直接浏览器打开）',
+      '改玩法/数值：' + path.join(data.dir, 'assets', 'scripts', 'game', 'content.ts') + ' 与 ' + path.join(data.dir, 'assets', 'scripts', 'game', 'rules', data.genre + '.ts') + '，再跑 game_build / game_check',
+      '截图与冒烟明细：' + path.join(data.dir, 'shots') + '、' + path.join(data.dir, 'cocos-check.json'),
+    ] : [
       '打开 ' + (data.singleFile ? path.join(data.dir, 'dist', data.singleFile) : path.join(data.dir, 'dist')) + ' 试玩（双击即玩）',
       '要改玩法/数值：编辑 ' + path.join(data.dir, 'js', 'content.js') + ' 与 ' + path.join(data.dir, 'js', 'rules', data.genre + '.js') + '，再跑 game_build / game_check',
       '截图与自检明细：' + path.join(data.dir, 'shots') + '、' + path.join(data.dir, 'check-report.json'),
-    ] : ['根据 error/failures 修复后重试，或改用 game_plan 调整选型'],
+    ]) : ['根据 error/failures 修复后重试，或改用 game_plan 调整选型'],
   };
 }
 
@@ -107,7 +119,7 @@ export function apply(ctx) {
   const definitions = [
     {
       name: 'game_genres',
-      description: '列出游戏工坊内置的玩法基因（塔防/割草/合成/排序/钩爪/放置…）与各自适配的一句话关键词。做新游戏前可先看这里，或直接 game_forge。',
+      description: '列出游戏工坊内置玩法基因（塔防/割草/合成/排序/钩爪/放置…）、支持的引擎（html / cocos）与各自适配的一句话关键词。做新游戏前可先看这里，或直接 game_forge。',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       output: { schema: outSchema, render },
       isConcurrencySafe: () => true,
@@ -137,7 +149,7 @@ export function apply(ctx) {
     },
     {
       name: 'game_forge',
-      description: '【核心】一句话生成一个完整可玩游戏：解析选型 → 生成内容与关卡 → 写出完整工程（Canvas 程序化美术 + WebAudio 合成音乐音效 + 存档/设置/选关/结算）→ 构建单文件离线版 → 无头仿真 100% 通关自检 → 无头浏览器冒烟与截图。返回工程路径、单文件路径、自检摘要；可直接把单文件交给用户试玩。生成后如需改玩法，编辑工程里的 content.js / rules/*.js 再用 game_build / game_check。',
+      description: '【核心】一句话生成一个完整可玩游戏，支持两种运行时：engine=html（默认，Canvas2D 单文件离线版，双击即玩）或 engine=cocos（Cocos Creator 3.8 工程，可用 Cocos CLI 构建 Web/Android/iOS/鸿蒙）。流程：解析选型 → 生成内容与关卡 → 写出完整工程 → 构建 → 无头浏览器冒烟与截图（HTML 档还会跑机器人逐关仿真）。描述里出现“Cocos”会自动选 Cocos 工程。返回工程路径、构建产物、自检摘要；生成后编辑 content / rules 再用 game_build / game_check 迭代。',
       parameters: {
         type: 'object',
         properties: {
@@ -148,6 +160,7 @@ export function apply(ctx) {
           levels: { type: 'integer', description: '关卡数 6~60（可选，默认按基因）' },
           title: { type: 'string', description: '游戏名（可选，默认由题材+基因生成）' },
           seed: { type: 'integer', description: '随机种子（可选）' },
+          engine: { type: 'string', description: '运行时：html（默认）或 cocos（Cocos Creator 3.8 工程）。描述里出现 Cocos 时自动选 cocos' },
           check: { type: 'boolean', description: '是否跑完整自检（默认 true；false 时只写工程+构建，快很多）' },
           browser: { type: 'boolean', description: '自检是否包含无头浏览器与截图（默认 true；机器没有 Chrome 时传 false）' },
           overwrite: { type: 'boolean', description: '目录非空时是否覆盖（默认 false）' },
@@ -165,6 +178,7 @@ export function apply(ctx) {
         if (args.levels) argv.push('--levels', String(args.levels));
         if (args.title) argv.push('--title', String(args.title));
         if (args.seed != null) argv.push('--seed', String(args.seed));
+        if (args.engine) argv.push('--engine', String(args.engine));
         if (args.check === false) argv.push('--no-check');
         if (args.browser === false) argv.push('--no-browser');
         if (args.overwrite) argv.push('--overwrite');
@@ -174,7 +188,7 @@ export function apply(ctx) {
     },
     {
       name: 'game_build',
-      description: '重新构建单文件离线版（dist/<游戏名>.html）。改完 content.js / rules 后用它；会打印体积与是否还有外部引用。',
+      description: '重新构建游戏产物：HTML 工程 → 单文件离线版 dist/<游戏名>.html；Cocos 工程 → Cocos CLI 构建 build/web-mobile/index.html。改完 content / rules 后用它。',
       parameters: {
         type: 'object',
         properties: { dir: { type: 'string', description: '游戏工程目录（game_forge 返回的 dir）' } },
@@ -188,7 +202,7 @@ export function apply(ctx) {
     },
     {
       name: 'game_check',
-      description: '对已生成工程跑交付自检：数据校验 / 无头仿真（机器人逐关试玩，要求全通关且摆烂不通关）/ 单文件零外部引用 / 无头浏览器冒烟与截图。返回 check-report.json 摘要。',
+      description: '对已生成工程跑交付自检：HTML 档 = 数据校验 / 机器人逐关仿真（要求全通关且摆烂不通关）/ 单文件零外部引用 / 无头浏览器；Cocos 档 = 工程结构 / Cocos CLI 构建 / 无头 Chrome(WebGL) 启动·战斗·结算冒烟与截图。',
       parameters: {
         type: 'object',
         properties: {

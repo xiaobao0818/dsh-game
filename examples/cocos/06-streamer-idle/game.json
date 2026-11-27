@@ -1,0 +1,31 @@
+{
+  "generator": "dsh-game-studio",
+  "engine": "cocos",
+  "creator": "3.8.8",
+  "version": 1,
+  "slug": "idle-dev",
+  "title": "三十天开播",
+  "subtitle": "都市夜景 · 保安的生意",
+  "tagline": "按天经营，选节目/员工/升级，滚大收益，在期限内达成目标。",
+  "genre": "idle",
+  "theme": "city",
+  "orientation": "portrait",
+  "levels": 24,
+  "seed": 1245917665,
+  "brief": "主播模拟经营的放置游戏，24关，竖屏",
+  "plan": {
+    "theme": "city",
+    "themeReason": "city(4)",
+    "genre": "idle",
+    "genreReason": "放置,经营,模拟,主播",
+    "title": "三十天开播",
+    "levels": 24,
+    "orientation": "portrait",
+    "engine": "cocos"
+  },
+  "designResolution": {
+    "width": 720,
+    "height": 1280
+  },
+  "createdAt": "2026-11-27T10:55:27.569Z"
+}

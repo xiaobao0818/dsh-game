@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "游戏工坊",
-    "description": "一句话生成完整可玩的 HTML5 游戏（工程 + 单文件离线版 + 自检）。对话里说\"做一个…塔防/打捞/合成\"即可触发 game_forge；game_plan 预览选型，game_build / game_check 用于迭代与验收。程序化占位美术与合成音频，不生成安装包；浏览器自检需本机 Chrome。",
+    "description": "一句话生成完整可玩的游戏：HTML5 单文件离线版或 Cocos Creator 3.8 工程（可构建 Web/Android/iOS/鸿蒙），两种目标共用同一套玩法与内容，并自带机器人逐关仿真、Cocos CLI 构建与无头浏览器截图验收。对话里说\"做一个…塔防\"或\"用 Cocos 做…\"即可触发 game_forge。",
     "detail": "docs/PREVIEW.md"
   }
 }

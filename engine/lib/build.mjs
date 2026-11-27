@@ -57,7 +57,7 @@ export function writeProject({ dir, content, plan, ruleId }) {
   const baseFiles = ['js/core.js', 'js/platform.js', 'js/render.js', 'js/art.js', 'js/app.js'];
   for (const f of baseFiles) writeIfChanged(path.join(dir, f), read('base/' + f));
   let main = read('base/js/main.js');
-  main = main.replace("from './rules/horde.js'", `from './rules/${ruleId}.js'`);
+  main = main.replace(/__GENRE__/g, ruleId);
   writeIfChanged(path.join(dir, 'js/main.js'), main);
   writeIfChanged(path.join(dir, 'index.html'), renderHtml(content.theme, title, content.subtitle));
   writeIfChanged(path.join(dir, 'css/style.css'), renderCss(content.theme));

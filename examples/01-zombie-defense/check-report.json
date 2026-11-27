@@ -26,7 +26,7 @@
       "ok": true,
       "info": {
         "file": "僵尸围山门.html",
-        "kb": 164.6,
+        "kb": 166.3,
         "external": 0
       }
     },
@@ -47,7 +47,7 @@
           "enemies": 0,
           "units": 0,
           "kills": 0,
-          "time": 2.916666666666661,
+          "time": 2.8999999999999946,
           "spawned": 0,
           "schedule": 16,
           "status": "playing"
@@ -78,7 +78,7 @@
     },
     "singlefile": {
       "file": "僵尸围山门.html",
-      "kb": 164.6,
+      "kb": 166.3,
       "external": 0
     },
     "browser": {
@@ -95,7 +95,7 @@
         "enemies": 0,
         "units": 0,
         "kills": 0,
-        "time": 2.916666666666661,
+        "time": 2.8999999999999946,
         "spawned": 0,
         "schedule": 16,
         "status": "playing"

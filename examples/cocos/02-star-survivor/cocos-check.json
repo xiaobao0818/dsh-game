@@ -1,0 +1,159 @@
+{
+  "ok": true,
+  "engine": "cocos",
+  "checks": [
+    {
+      "name": "structure",
+      "ok": true,
+      "info": {
+        "creator": "3.8.8",
+        "engine": "cocos",
+        "levels": 24
+      }
+    },
+    {
+      "name": "build",
+      "ok": true,
+      "info": {
+        "ms": 12237,
+        "out": "build/web-mobile/index.html"
+      }
+    },
+    {
+      "name": "browser",
+      "ok": true,
+      "info": {
+        "boot": {
+          "scene": "title",
+          "fps": 18,
+          "W": 1280,
+          "H": 720,
+          "gs": {
+            "W": 1280,
+            "H": 720
+          }
+        },
+        "play": {
+          "scene": "play",
+          "level": 3,
+          "fps": 43,
+          "rule": {
+            "time": 4.15,
+            "hp": 112,
+            "maxHp": 112,
+            "lvl": 1,
+            "xp": 0,
+            "xpNeed": 4,
+            "kills": 1,
+            "enemies": 2,
+            "gems": 1,
+            "atk": 13,
+            "rate": 0.42,
+            "range": 430,
+            "shots": 1,
+            "pierce": 0,
+            "speed": 214,
+            "phase": "play",
+            "bossHp": 0,
+            "bossKilled": false,
+            "spawned": 3,
+            "status": "playing"
+          }
+        },
+        "result": {
+          "scene": "result",
+          "result": {
+            "win": true,
+            "stars": 3
+          },
+          "fps": 27
+        },
+        "shots": {
+          "cocos-title": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/02-star-survivor/shots/cocos-title.png",
+            "bytes": 70347
+          },
+          "cocos-play": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/02-star-survivor/shots/cocos-play.png",
+            "bytes": 33148
+          },
+          "cocos-result": {
+            "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/02-star-survivor/shots/cocos-result.png",
+            "bytes": 38661
+          }
+        },
+        "durationMs": 14148
+      }
+    }
+  ],
+  "failures": [],
+  "warnings": [],
+  "stats": {
+    "build": {
+      "ok": true,
+      "ms": 12237
+    },
+    "browser": {
+      "boot": {
+        "scene": "title",
+        "fps": 18,
+        "W": 1280,
+        "H": 720,
+        "gs": {
+          "W": 1280,
+          "H": 720
+        }
+      },
+      "play": {
+        "scene": "play",
+        "level": 3,
+        "fps": 43,
+        "rule": {
+          "time": 4.15,
+          "hp": 112,
+          "maxHp": 112,
+          "lvl": 1,
+          "xp": 0,
+          "xpNeed": 4,
+          "kills": 1,
+          "enemies": 2,
+          "gems": 1,
+          "atk": 13,
+          "rate": 0.42,
+          "range": 430,
+          "shots": 1,
+          "pierce": 0,
+          "speed": 214,
+          "phase": "play",
+          "bossHp": 0,
+          "bossKilled": false,
+          "spawned": 3,
+          "status": "playing"
+        }
+      },
+      "result": {
+        "scene": "result",
+        "result": {
+          "win": true,
+          "stars": 3
+        },
+        "fps": 27
+      },
+      "shots": {
+        "cocos-title": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/02-star-survivor/shots/cocos-title.png",
+          "bytes": 70347
+        },
+        "cocos-play": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/02-star-survivor/shots/cocos-play.png",
+          "bytes": 33148
+        },
+        "cocos-result": {
+          "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/02-star-survivor/shots/cocos-result.png",
+          "bytes": 38661
+        }
+      },
+      "durationMs": 14148
+    }
+  }
+}

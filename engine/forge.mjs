@@ -19,21 +19,21 @@ function print(obj) { console.log(JSON.stringify(obj, null, 2)); }
 
 try {
   if (cmd === 'genres') {
-    print({ ok: true, genres: listGenres() });
+    print({ ok: true, genres: listGenres(), engines: ['html', 'cocos'] });
   } else if (cmd === 'plan') {
     const brief = arg('brief', '');
-    const plan = planGame(brief, { genre: arg('genre'), theme: arg('theme'), levels: arg('levels'), title: arg('title'), seed: arg('seed') });
+    const plan = planGame(brief, { genre: arg('genre'), theme: arg('theme'), levels: arg('levels'), title: arg('title'), seed: arg('seed'), engine: arg('engine') });
     if (has('full')) print({ ok: true, plan });
     else print({ ok: true, plan: {
       brief: plan.brief, seed: plan.seed, title: plan.title, subtitle: plan.subtitle, tagline: plan.tagline,
       genre: plan.genre, genreName: plan.meta.name, theme: plan.theme.id, themeName: plan.theme.name,
-      levels: plan.levelCount, orientation: plan.orientation, reason: plan.reason,
+      levels: plan.levelCount, orientation: plan.orientation, engine: plan.engine, reason: plan.reason,
       themes: Object.fromEntries(Object.entries(plan.scores)),
     } });
   } else if (cmd === 'forge') {
     const r = await forge({
       brief: arg('brief', ''), dir: arg('dir', ''),
-      genre: arg('genre'), theme: arg('theme'), levels: arg('levels'), title: arg('title'), seed: arg('seed'),
+      genre: arg('genre'), theme: arg('theme'), levels: arg('levels'), title: arg('title'), seed: arg('seed'), engine: arg('engine'),
       check: !has('no-check'), overwrite: has('overwrite'), browser: !has('no-browser'),
     });
     print(r);

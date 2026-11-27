@@ -1,0 +1,13 @@
+{
+  "name": "merge-dev",
+  "creator": {
+    "version": "3.8.8"
+  },
+  "uuid": "6bacde56-6332-4816-a350-45e2a84df7aa",
+  "version": "1.0.0",
+  "description": "火锅店合成记 · Cocos Creator 3.8 版（游戏工坊生成）",
+  "scripts": {
+    "build:web": "bash tools/build-web.sh",
+    "smoke": "node tools/cocos-smoke.mjs --project ."
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "ok": true,
+  "project": "/Volumes/张小宝/202611/.studio-dev/cocos-games/05-deepsea-hook",
+  "build": "/Volumes/张小宝/202611/.studio-dev/cocos-games/05-deepsea-hook/build/web-mobile",
+  "shots": {
+    "cocos-title": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/05-deepsea-hook/shots/cocos-title.png",
+      "bytes": 33612
+    },
+    "cocos-play": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/05-deepsea-hook/shots/cocos-play.png",
+      "bytes": 56319
+    },
+    "cocos-result": {
+      "file": "/Volumes/张小宝/202611/.studio-dev/cocos-games/05-deepsea-hook/shots/cocos-result.png",
+      "bytes": 24055
+    }
+  },
+  "errors": [],
+  "warnings": [
+    "FPS 偏低（无头软件渲染）：14"
+  ],
+  "checks": [
+    {
+      "name": "boot",
+      "ok": true,
+      "info": {
+        "ready": true
+      }
+    },
+    {
+      "name": "play",
+      "ok": true,
+      "info": {
+        "scene": "play",
+        "level": 3,
+        "fps": 14,
+        "rule": {
+          "phase": "shop",
+          "status": "playing",
+          "score": 0,
+          "target": 1230,
+          "left": 66,
+          "time": 0,
+          "shots": 0,
+          "kills": 0,
+          "items": 33,
+          "hook": "swing",
+          "stun": 0,
+          "coins": 160,
+          "power": 0,
+          "reel": 0,
+          "aim": 0,
+          "luck": 0,
+          "reached": false,
+          "pos": 28,
+          "board": 2063
+        }
+      }
+    },
+    {
+      "name": "result",
+      "ok": true,
+      "info": {
+        "scene": "result",
+        "result": {
+          "win": true,
+          "stars": 2
+        },
+        "fps": 39
+      }
+    },
+    {
+      "name": "console",
+      "ok": true,
+      "info": {
+        "errors": 0
+      }
+    }
+  ],
+  "boot": {
+    "scene": "title",
+    "fps": 29,
+    "W": 720,
+    "H": 1280,
+    "gs": {
+      "W": 720,
+      "H": 1280
+    }
+  },
+  "play": {
+    "scene": "play",
+    "level": 3,
+    "fps": 14,
+    "rule": {
+      "phase": "shop",
+      "status": "playing",
+      "score": 0,
+      "target": 1230,
+      "left": 66,
+      "time": 0,
+      "shots": 0,
+      "kills": 0,
+      "items": 33,
+      "hook": "swing",
+      "stun": 0,
+      "coins": 160,
+      "power": 0,
+      "reel": 0,
+      "aim": 0,
+      "luck": 0,
+      "reached": false,
+      "pos": 28,
+      "board": 2063
+    }
+  },
+  "fastForward": "won",
+  "result": {
+    "scene": "result",
+    "result": {
+      "win": true,
+      "stars": 2
+    },
+    "fps": 39
+  },
+  "durationMs": 14043
+}

@@ -1,0 +1,13 @@
+{
+  "name": "horde-i3z5x2",
+  "creator": {
+    "version": "3.8.8"
+  },
+  "uuid": "9b7bd9bc-cefa-4588-af49-d0bad7912de4",
+  "version": "1.0.0",
+  "description": "僵尸围山门 · Cocos Creator 3.8 版（游戏工坊生成）",
+  "scripts": {
+    "build:web": "bash tools/build-web.sh",
+    "smoke": "node tools/cocos-smoke.mjs --project ."
+  }
+}
